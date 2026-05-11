@@ -1,8 +1,9 @@
 const fs = require("fs/promises");
 const fssync = require("fs");
 const path = require("path");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const { promisify } = require("util");
+const ffmpegPath = require("ffmpeg-static");
 const sharp = require("sharp");
 const { PDFDocument } = require("pdf-lib");
 const { Poppler } = require("node-poppler");
@@ -46,14 +47,22 @@ const WORD_EXTENSIONS = new Set([".doc", ".docx", ".rtf", ".txt", ".odt"]);
 const PRESENTATION_EXTENSIONS = new Set([".ppt", ".pptx"]);
 const SPREADSHEET_EXTENSIONS = new Set([".xls", ".xlsx"]);
 const DOCUMENT_EXTENSIONS = new Set([...WORD_EXTENSIONS, ...PRESENTATION_EXTENSIONS, ...SPREADSHEET_EXTENSIONS]);
+const VIDEO_EXTENSIONS = new Set([".3gp", ".avi", ".flv", ".mkv", ".mov", ".mp4", ".ogv", ".webm", ".wmv", ".ts"]);
+const AUDIO_EXTENSIONS = new Set([".aac", ".aiff", ".alac", ".amr", ".flac", ".m4a", ".mp3", ".ogg", ".wav", ".wma"]);
 const WORD_TARGETS = new Set(["pdf", "doc", "docx", "rtf", "txt", "odt"]);
 const PRESENTATION_TARGETS = new Set(["pdf", "ppt", "pptx"]);
 const SPREADSHEET_TARGETS = new Set(["pdf", "xls", "xlsx"]);
 const DOCUMENT_TARGETS = new Set([...WORD_TARGETS, ...PRESENTATION_TARGETS, ...SPREADSHEET_TARGETS]);
 const OUTPUT_TARGETS = new Set(["png", "jpg", "gif", "tiff", "tif", "bmp", "webp", "ico", "avif", "jp2", "jxl", "svg", "emf"]);
+const VIDEO_TARGETS = new Set(["3gp", "avi", "flv", "gif", "mkv", "mov", "mp4", "ogv", "webm", "wmv", "ts"]);
+const AUDIO_TARGETS = new Set(["aac", "aiff", "alac", "amr", "flac", "m4a", "mp3", "ogg", "wav", "wma"]);
 const DOCUMENT_PDF_ENGINES = new Set(["office", "libreoffice", "auto"]);
+const MEDIA_ENCODING_MODES = new Set(["auto", "cpu"]);
+const VIDEO_GIF_MAX_DURATION_SECONDS = 10;
 let jxlEncoderPromise = null;
 let openJpegPromise = null;
+let ffmpegEncodersPromise = null;
+let h264EncoderPromise = null;
 
 function getKind(filePath) {
   const extension = path.extname(filePath).toLowerCase();
@@ -68,6 +77,14 @@ function getKind(filePath) {
 
   if (DOCUMENT_EXTENSIONS.has(extension)) {
     return "document";
+  }
+
+  if (VIDEO_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  if (AUDIO_EXTENSIONS.has(extension)) {
+    return "audio";
   }
 
   return "unsupported";
@@ -101,6 +118,14 @@ function isSupportedTarget(kind, target) {
 
   if (kind === "document") {
     return OUTPUT_TARGETS.has(target) || isSupportedDocumentTarget("", target);
+  }
+
+  if (kind === "video") {
+    return VIDEO_TARGETS.has(target) || AUDIO_TARGETS.has(target);
+  }
+
+  if (kind === "audio") {
+    return AUDIO_TARGETS.has(target);
   }
 
   return false;
@@ -326,6 +351,10 @@ function outputExtensionFor(target) {
     return "jpg";
   }
 
+  if (target === "alac") {
+    return "m4a";
+  }
+
   if (target === "tif") {
     return "tif";
   }
@@ -378,6 +407,385 @@ function imagePdfDpiFromRequest(request) {
   }
 
   return Math.min(300, Math.max(96, Math.round(dpi)));
+}
+
+function ffmpegBinaryPath() {
+  const packagedPath = process.resourcesPath
+    ? path.join(process.resourcesPath, "app.asar.unpacked", "node_modules", "ffmpeg-static", "ffmpeg.exe")
+    : null;
+
+  if (packagedPath && fssync.existsSync(packagedPath)) {
+    return packagedPath;
+  }
+
+  return ffmpegPath;
+}
+
+function nodeLikeRuntimePath() {
+  return process.execPath;
+}
+
+function jxlWasmWrapperPath() {
+  const relativePath = path.join("node_modules", "jxl-wasm", "lib", "cjxl-wrap.js");
+  const packagedPath = process.resourcesPath
+    ? path.join(process.resourcesPath, "app.asar.unpacked", relativePath)
+    : null;
+
+  if (packagedPath && fssync.existsSync(packagedPath)) {
+    return packagedPath;
+  }
+
+  return require.resolve("jxl-wasm/lib/cjxl-wrap.js");
+}
+
+function shortErrorMessage(error) {
+  const text = String(error?.stderr || error?.message || error || "");
+  const firstUsefulLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("var Module=") && !line.includes("process.argv ="));
+
+  return (firstUsefulLine || "Unknown error").slice(0, 500);
+}
+
+function secondsFromFfmpegTime(value) {
+  const match = String(value || "").match(/^(\d+):(\d+):(\d+(?:\.\d+)?)/);
+
+  if (!match) {
+    return 0;
+  }
+
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+function mediaProgressMessage(label, seconds, durationSeconds) {
+  if (!durationSeconds) {
+    return `${label}...`;
+  }
+
+  const percent = Math.max(0, Math.min(99, Math.round((seconds / durationSeconds) * 100)));
+  return `${label}... ${percent}%`;
+}
+
+function cleanMediaEncodingMode(mode) {
+  const normalized = String(mode || "auto").toLowerCase();
+  return MEDIA_ENCODING_MODES.has(normalized) ? normalized : "auto";
+}
+
+async function mediaDurationSeconds(filePath) {
+  try {
+    await execFileAsync(ffmpegBinaryPath(), ["-hide_banner", "-i", filePath], {
+      windowsHide: true,
+      maxBuffer: 1024 * 1024
+    });
+  } catch (error) {
+    const text = `${error.stderr || ""}\n${error.stdout || ""}`;
+    const match = text.match(/Duration:\s*(\d+:\d+:\d+(?:\.\d+)?)/);
+
+    return match ? secondsFromFfmpegTime(match[1]) : 0;
+  }
+
+  return 0;
+}
+
+async function ffmpegEncoders() {
+  if (!ffmpegEncodersPromise) {
+    ffmpegEncodersPromise = execFileAsync(ffmpegBinaryPath(), ["-hide_banner", "-encoders"], {
+      windowsHide: true,
+      maxBuffer: 1024 * 1024 * 4
+    })
+      .then(({ stdout }) => stdout)
+      .catch(() => "");
+  }
+
+  return ffmpegEncodersPromise;
+}
+
+async function bestH264Encoder() {
+  if (!h264EncoderPromise) {
+    h264EncoderPromise = (async () => {
+      const encoders = await ffmpegEncoders();
+      const candidates = ["h264_nvenc", "h264_qsv", "h264_amf"];
+
+      for (const encoder of candidates) {
+        if (!new RegExp(`\\b${encoder}\\b`).test(encoders)) {
+          continue;
+        }
+
+        try {
+          await execFileAsync(ffmpegBinaryPath(), [
+            "-hide_banner",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=size=128x128:rate=30:duration=1",
+            "-frames:v",
+            "1",
+            "-c:v",
+            encoder,
+            "-f",
+            "null",
+            "-"
+          ], {
+            windowsHide: true,
+            timeout: 8000,
+            maxBuffer: 1024 * 1024
+          });
+
+          return encoder;
+        } catch {
+          // Hardware encoders can be compiled in but unavailable on this PC.
+        }
+      }
+
+      return "libx264";
+    })();
+  }
+
+  return h264EncoderPromise;
+}
+
+async function h264VideoArgs(encodingMode = "auto") {
+  if (cleanMediaEncodingMode(encodingMode) === "cpu") {
+    return {
+      args: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"],
+      label: "CPU H.264"
+    };
+  }
+
+  const encoder = await bestH264Encoder();
+
+  if (encoder === "libx264") {
+    return {
+      args: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"],
+      label: "CPU H.264"
+    };
+  }
+
+  return {
+    args: ["-c:v", encoder, "-preset", "fast", "-cq", "23"],
+    label: `GPU ${encoder}`
+  };
+}
+
+async function videoCodecArgsFor(target, encodingMode = "auto") {
+  if (target === "gif") {
+    return {
+      args: ["-vf", "fps=15,scale='min(640,iw)':-2:flags=lanczos", "-loop", "0"],
+      label: "CPU GIF"
+    };
+  }
+
+  if (target === "webm") {
+    return {
+      args: ["-c:v", "libvpx", "-deadline", "good", "-cpu-used", "4", "-b:v", "2M", "-c:a", "libopus"],
+      label: "CPU WebM"
+    };
+  }
+
+  if (target === "ogv") {
+    return {
+      args: ["-c:v", "libtheora", "-q:v", "7", "-c:a", "libvorbis", "-q:a", "5"],
+      label: "CPU OGV"
+    };
+  }
+
+  if (target === "wmv") {
+    return {
+      args: ["-c:v", "wmv2", "-q:v", "4", "-c:a", "wmav2"],
+      label: "CPU WMV"
+    };
+  }
+
+  if (target === "avi") {
+    return {
+      args: ["-c:v", "mpeg4", "-q:v", "4", "-c:a", "libmp3lame", "-q:a", "3"],
+      label: "CPU AVI"
+    };
+  }
+
+  if (target === "flv") {
+    return {
+      args: ["-c:v", "flv", "-q:v", "4", "-c:a", "libmp3lame", "-q:a", "3"],
+      label: "CPU FLV"
+    };
+  }
+
+  if (target === "3gp") {
+    return {
+      args: ["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "baseline", "-level", "3.0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"],
+      label: "CPU 3GP"
+    };
+  }
+
+  const h264 = await h264VideoArgs(encodingMode);
+  return {
+    args: [...h264.args, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"],
+    label: h264.label
+  };
+}
+
+function audioCodecArgsFor(target) {
+  const argsByTarget = {
+    aac: ["-c:a", "aac", "-b:a", "192k"],
+    aiff: ["-c:a", "pcm_s16be"],
+    alac: ["-c:a", "alac"],
+    amr: ["-c:a", "libopencore_amrnb", "-ar", "8000", "-ac", "1", "-b:a", "12.2k"],
+    flac: ["-c:a", "flac"],
+    m4a: ["-c:a", "aac", "-b:a", "192k"],
+    mp3: ["-c:a", "libmp3lame", "-q:a", "2"],
+    ogg: ["-c:a", "libvorbis", "-q:a", "5"],
+    wav: ["-c:a", "pcm_s16le"],
+    wma: ["-c:a", "wmav2", "-b:a", "192k"]
+  };
+
+  return {
+    args: argsByTarget[target] || ["-c:a", "aac", "-b:a", "192k"],
+    label: "CPU audio"
+  };
+}
+
+function mediaOutputFormatArgs(target) {
+  if (target === "alac") {
+    return ["-f", "ipod"];
+  }
+
+  if (target === "ts") {
+    return ["-f", "mpegts"];
+  }
+
+  return [];
+}
+
+function runFfmpeg(args, progressCallback = () => {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegBinaryPath(), args, {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stderr = "";
+    let stdout = "";
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+
+      for (const line of chunk.split(/\r?\n/)) {
+        const [key, value] = line.split("=");
+
+        if (key && value !== undefined) {
+          progressCallback(key.trim(), value.trim());
+        }
+      }
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      progressCallback("stderr", chunk);
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+
+      reject(new Error(stderr || stdout || `FFmpeg exited with code ${code}.`));
+    });
+  });
+}
+
+async function convertMediaFormat(filePath, target, output, inputKind, encodingMode = "auto", onProgress = () => {}) {
+  const binaryPath = ffmpegBinaryPath();
+
+  if (!binaryPath) {
+    throw new Error("Local FFmpeg binary is not available.");
+  }
+
+  const outputDir = outputDirectoryFor(filePath, output);
+  const baseName = outputBaseNameFor(filePath, output);
+  const outputPath = await uniquePath(path.join(outputDir, `${baseName}.${outputExtensionFor(target)}`));
+  const isAudioTarget = AUDIO_TARGETS.has(target);
+  const isGifTarget = target === "gif";
+  const codec = isAudioTarget ? audioCodecArgsFor(target) : await videoCodecArgsFor(target, encodingMode);
+  const label = codec.label || "Converting";
+  let durationSeconds = 0;
+  let lastPercent = -1;
+
+  if (isGifTarget) {
+    const duration = await mediaDurationSeconds(filePath);
+
+    if (!duration) {
+      throw new Error("Could not read video duration for GIF conversion.");
+    }
+
+    if (duration > VIDEO_GIF_MAX_DURATION_SECONDS) {
+      throw new Error(`GIF output is only available for videos ${VIDEO_GIF_MAX_DURATION_SECONDS} seconds or shorter.`);
+    }
+  }
+
+  const args = [
+    "-hide_banner",
+    "-y",
+    "-nostats",
+    "-i",
+    filePath,
+    "-map",
+    isAudioTarget ? "0:a:0" : "0:v:0",
+    ...(!isAudioTarget && !isGifTarget ? ["-map", "0:a?"] : []),
+    ...(isAudioTarget ? ["-vn"] : []),
+    ...(isGifTarget ? ["-an"] : []),
+    ...codec.args,
+    "-threads",
+    "0",
+    "-progress",
+    "pipe:1",
+    ...mediaOutputFormatArgs(target),
+    outputPath
+  ];
+
+  if (inputKind === "audio" && !isAudioTarget) {
+    throw new Error("Audio files can only be converted to audio formats.");
+  }
+
+  onProgress({ status: "running", message: `${label} started` });
+
+  try {
+    await runFfmpeg(args, (key, value) => {
+      if (key === "stderr") {
+        const durationMatch = value.match(/Duration:\s*(\d+:\d+:\d+(?:\.\d+)?)/);
+
+        if (durationMatch) {
+          durationSeconds = secondsFromFfmpegTime(durationMatch[1]);
+        }
+        return;
+      }
+
+      if (key !== "out_time_ms" && key !== "out_time_us") {
+        return;
+      }
+
+      const seconds = Number(value) / 1000000;
+      const percent = durationSeconds ? Math.floor((seconds / durationSeconds) * 100) : -1;
+
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        onProgress({
+          status: "running",
+          message: mediaProgressMessage(label, seconds, durationSeconds)
+        });
+      }
+    });
+  } catch (error) {
+    const detail = error.stderr || error.message;
+    throw new Error(`Local media conversion failed. ${detail}`);
+  }
+
+  return [outputPath];
 }
 
 async function convertImageFormat(filePath, target, output) {
@@ -542,22 +950,137 @@ async function jxlEncoder() {
 }
 
 async function writeJpegXl(outputPath, filePath) {
-  const encode = await jxlEncoder();
-  const { data, info } = await (await imageSharp(filePath))
-    .rotate()
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const encoded = await encode(
-    {
-      data: new Uint8ClampedArray(data),
-      width: info.width,
-      height: info.height
-    },
-    { quality: 90 }
-  );
+  const failures = [];
 
-  await fs.writeFile(outputPath, Buffer.from(encoded));
+  try {
+    await writeJpegXlWithCjxlWasm(outputPath, filePath);
+    return;
+  } catch (cjxlError) {
+    failures.push(`cjxl-wasm PNG path: ${shortErrorMessage(cjxlError)}`);
+  }
+
+  try {
+    await writeJpegXlWithJpegIntermediate(outputPath, filePath);
+    return;
+  } catch (jpegFallbackError) {
+    failures.push(`JPEG fallback: ${shortErrorMessage(jpegFallbackError)}`);
+  }
+
+  try {
+    await writeJpegXlWithJsquash(outputPath, filePath);
+    return;
+  } catch (jsquashError) {
+    failures.push(`@jsquash/jxl: ${shortErrorMessage(jsquashError)}`);
+  }
+
+  throw new Error(`JPEG XL conversion failed locally. ${failures.join(" ")}`);
+}
+
+async function writeJpegXlWithCjxlWasm(outputPath, filePath) {
+  const tempPng = await uniquePath(path.join(
+    path.dirname(outputPath),
+    `${baseNameWithoutExtension(outputPath)}_jxl_source.png`
+  ));
+
+  try {
+    await (await imageSharp(filePath))
+      .rotate()
+      .png({ compressionLevel: 6 })
+      .toFile(tempPng);
+
+    await runCjxlWasm(tempPng, outputPath);
+
+    if (!(await pathExists(outputPath))) {
+      throw new Error("cjxl-wasm finished but no JPEG XL file was created.");
+    }
+  } finally {
+    try {
+      await fs.unlink(tempPng);
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+async function runCjxlWasm(inputPath, outputPath) {
+  try {
+    await fs.unlink(outputPath);
+  } catch {
+    // The output usually does not exist yet; this only removes failed partial files.
+  }
+
+  const code = [
+    "global.fetch = undefined;",
+    "process.argv = ['node', 'cjxl', '--quality', '90', '--effort', '3', process.env.JXL_INPUT, process.env.JXL_OUTPUT];",
+    "require(process.env.JXL_CJXL_WRAP);"
+  ].join("");
+
+  try {
+    await execFileAsync(nodeLikeRuntimePath(), ["-e", code], {
+      windowsHide: true,
+      maxBuffer: 1024 * 1024 * 8,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        JXL_CJXL_WRAP: jxlWasmWrapperPath(),
+        JXL_INPUT: inputPath,
+        JXL_OUTPUT: outputPath
+      }
+    });
+  } catch (error) {
+    throw new Error(shortErrorMessage(error));
+  }
+}
+
+async function writeJpegXlWithJpegIntermediate(outputPath, filePath) {
+  const tempJpeg = await uniquePath(path.join(
+    path.dirname(outputPath),
+    `${baseNameWithoutExtension(outputPath)}_jxl_source.jpg`
+  ));
+
+  try {
+    await (await imageSharp(filePath))
+      .rotate()
+      .flatten({ background: "#ffffff" })
+      .jpeg({ quality: 95, mozjpeg: true })
+      .toFile(tempJpeg);
+
+    await runCjxlWasm(tempJpeg, outputPath);
+
+    if (!(await pathExists(outputPath))) {
+      throw new Error("JPEG fallback finished but no JPEG XL file was created.");
+    }
+  } finally {
+    try {
+      await fs.unlink(tempJpeg);
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+}
+
+async function writeJpegXlWithJsquash(outputPath, filePath) {
+  try {
+    const encode = await jxlEncoder();
+    const { data, info } = await (await imageSharp(filePath))
+      .rotate()
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const encoded = await encode(
+      {
+        data: new Uint8ClampedArray(data),
+        width: info.width,
+        height: info.height
+      },
+      { quality: 90, effort: 4 }
+    );
+
+    await fs.writeFile(outputPath, Buffer.from(encoded));
+  } catch (error) {
+    jxlEncoderPromise = null;
+    throw error;
+  }
 }
 
 async function openJpeg() {
@@ -1061,7 +1584,7 @@ async function ensureOutputDirectory(output) {
   }
 }
 
-async function convertSingle(item, request) {
+async function convertSingle(item, request, onProgress = () => {}) {
   const kind = getKind(item.path);
   const target = cleanTarget(item.target);
 
@@ -1097,6 +1620,19 @@ async function convertSingle(item, request) {
     return convertOfficeDocument(item.path, target, request.output, request.documentPdfEngine);
   }
 
+  if (kind === "video" || kind === "audio") {
+    return convertMediaFormat(
+      item.path,
+      target,
+      request.output,
+      kind,
+      request.mediaEncodingMode,
+      (progress) => {
+        onProgress({ id: item.id, ...progress });
+      }
+    );
+  }
+
   return convertPdfToImageFormat(item.path, target, Number(request.pdfDpi || 150), request.output);
 }
 
@@ -1119,16 +1655,16 @@ async function convertBatch(request, onProgress = () => {}) {
     onProgress({ id: item.id, status: "running", message: "Converting..." });
 
     try {
-      const outputPaths = await convertSingle({ ...item, target }, request);
+      const outputPaths = await convertSingle({ ...item, target }, request, onProgress);
       const result = { id: item.id, status: "done", outputPaths };
 
       results.push(result);
       onProgress({ ...result, message: "Done" });
     } catch (error) {
-      const result = { id: item.id, status: "error", error: error.message };
+      const result = { id: item.id, status: "error", error: shortErrorMessage(error) };
 
       results.push(result);
-      onProgress({ ...result, message: error.message });
+      onProgress({ ...result, message: result.error });
     }
   }
 
@@ -1152,10 +1688,10 @@ async function convertBatch(request, onProgress = () => {}) {
       }
     } catch (error) {
       for (const item of combineItems) {
-        const result = { id: item.id, status: "error", error: error.message };
+        const result = { id: item.id, status: "error", error: shortErrorMessage(error) };
 
         results.push(result);
-        onProgress({ ...result, message: error.message });
+        onProgress({ ...result, message: result.error });
       }
     }
   }
@@ -1168,6 +1704,7 @@ module.exports = {
   convertImageFormat,
   convertImageToPdf,
   convertImagesToSinglePdf,
+  convertMediaFormat,
   convertOfficeDocument,
   convertPdfToImageFormat,
   convertPdfToPng,

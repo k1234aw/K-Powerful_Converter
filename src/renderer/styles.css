@@ -81,6 +81,14 @@ button:disabled {
   min-width: 0;
 }
 
+.app-logo {
+  width: 54px;
+  height: 54px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  box-shadow: 0 12px 24px rgba(23, 107, 135, 0.16);
+}
+
 .topbar p {
   margin: 6px 0 0;
   color: var(--muted);
@@ -428,11 +436,16 @@ tbody tr:last-child td {
 }
 
 .setting-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 280px);
   align-items: center;
-  gap: 10px;
+  gap: 18px;
   margin-top: 14px;
+}
+
+.setting-row select {
+  justify-self: end;
+  width: 100%;
 }
 
 .settings-note {
@@ -897,5 +910,14 @@ tbody tr:last-child td {
 
   .format-panel-layout {
     grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .setting-row select {
+    justify-self: stretch;
   }
 }

@@ -4,6 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 
 let mainWindow;
 let conversionService = null;
+const appIconPath = path.join(__dirname, "..", "renderer", "assets", "logo.ico");
 
 function logStartup(message, detail = "") {
   try {
@@ -32,6 +33,7 @@ function createWindow() {
     minHeight: 620,
     backgroundColor: "#f6f7f9",
     title: "Powerful Converter",
+    icon: appIconPath,
     webPreferences: {
       preload: path.join(__dirname, "..", "preload", "preload.js"),
       contextIsolation: true,
@@ -134,7 +136,27 @@ ipcMain.handle("dialog:open-files", async () => {
           "txt",
           "xls",
           "xlsx",
-          "pdf"
+          "pdf",
+          "3gp",
+          "avi",
+          "flv",
+          "mkv",
+          "mov",
+          "mp4",
+          "ogv",
+          "webm",
+          "wmv",
+          "ts",
+          "aac",
+          "aiff",
+          "alac",
+          "amr",
+          "flac",
+          "m4a",
+          "mp3",
+          "ogg",
+          "wav",
+          "wma"
         ]
       },
       {
@@ -174,6 +196,8 @@ ipcMain.handle("dialog:open-files", async () => {
         ]
       },
       { name: "Documents", extensions: ["doc", "docx", "odt", "ppt", "pptx", "rtf", "txt", "xls", "xlsx", "pdf"] },
+      { name: "Video", extensions: ["3gp", "avi", "flv", "mkv", "mov", "mp4", "ogv", "webm", "wmv", "ts"] },
+      { name: "Audio", extensions: ["aac", "aiff", "alac", "amr", "flac", "m4a", "mp3", "ogg", "wav", "wma"] },
       { name: "PDF", extensions: ["pdf"] },
       { name: "All files", extensions: ["*"] }
     ]

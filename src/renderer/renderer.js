@@ -4,6 +4,7 @@ const settingsButton = document.querySelector("#settingsButton");
 const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const settingsPanel = document.querySelector("#settingsPanel");
 const documentPdfEngine = document.querySelector("#documentPdfEngine");
+const mediaEncodingMode = document.querySelector("#mediaEncodingMode");
 const fileNameUsePrefix = document.querySelector("#fileNameUsePrefix");
 const fileNamePrefix = document.querySelector("#fileNamePrefix");
 const fileNameUseOriginal = document.querySelector("#fileNameUseOriginal");
@@ -97,7 +98,27 @@ const extensionKinds = new Map([
   [".txt", "document"],
   [".xls", "document"],
   [".xlsx", "document"],
-  [".pdf", "pdf"]
+  [".pdf", "pdf"],
+  [".3gp", "video"],
+  [".avi", "video"],
+  [".flv", "video"],
+  [".mkv", "video"],
+  [".mov", "video"],
+  [".mp4", "video"],
+  [".ogv", "video"],
+  [".webm", "video"],
+  [".wmv", "video"],
+  [".ts", "video"],
+  [".aac", "audio"],
+  [".aiff", "audio"],
+  [".alac", "audio"],
+  [".amr", "audio"],
+  [".flac", "audio"],
+  [".m4a", "audio"],
+  [".mp3", "audio"],
+  [".ogg", "audio"],
+  [".wav", "audio"],
+  [".wma", "audio"]
 ]);
 
 const outputFormats = [
@@ -130,13 +151,42 @@ const documentFormats = [
   { value: "xlsx", label: "XLSX", keywords: "xlsx excel spreadsheet" }
 ];
 const documentFormatLabels = new Map(documentFormats.map((format) => [format.value, format.label]));
+const videoFormats = [
+  { value: "3gp", label: "3GP", keywords: "3gp video" },
+  { value: "avi", label: "AVI", keywords: "avi video" },
+  { value: "flv", label: "FLV", keywords: "flv flash video" },
+  { value: "gif", label: "GIF", keywords: "gif animated video 10 seconds", group: "video" },
+  { value: "mkv", label: "MKV", keywords: "mkv matroska video" },
+  { value: "mov", label: "MOV", keywords: "mov quicktime video" },
+  { value: "mp4", label: "MP4", keywords: "mp4 video" },
+  { value: "ogv", label: "OGV", keywords: "ogv ogg video" },
+  { value: "webm", label: "WebM", keywords: "webm video" },
+  { value: "wmv", label: "WMV", keywords: "wmv windows media video" },
+  { value: "ts", label: "TS", keywords: "ts mpeg transport stream video" }
+];
+const audioFormats = [
+  { value: "aac", label: "AAC", keywords: "aac audio" },
+  { value: "aiff", label: "AIFF", keywords: "aiff audio" },
+  { value: "alac", label: "ALAC", keywords: "alac apple lossless audio" },
+  { value: "amr", label: "AMR", keywords: "amr audio" },
+  { value: "flac", label: "FLAC", keywords: "flac lossless audio" },
+  { value: "m4a", label: "M4A", keywords: "m4a audio" },
+  { value: "mp3", label: "MP3", keywords: "mp3 audio" },
+  { value: "ogg", label: "OGG", keywords: "ogg vorbis audio" },
+  { value: "wav", label: "WAV", keywords: "wav audio" },
+  { value: "wma", label: "WMA", keywords: "wma windows media audio" }
+];
+const videoFormatLabels = new Map(videoFormats.map((format) => [format.value, format.label]));
+const audioFormatLabels = new Map(audioFormats.map((format) => [format.value, format.label]));
 const wordTargets = new Set(["pdf", "doc", "docx", "rtf", "txt", "odt"]);
 const presentationTargets = new Set(["pdf", "ppt", "pptx"]);
 const spreadsheetTargets = new Set(["pdf", "xls", "xlsx"]);
-const allFileOutputFormats = [...documentFormats, ...outputFormats];
+const allFileOutputFormats = [...documentFormats, ...outputFormats, ...videoFormats, ...audioFormats];
 const formatGroups = [
   { value: "image", label: "Image" },
-  { value: "document", label: "Document" }
+  { value: "document", label: "Document" },
+  { value: "video", label: "Video" },
+  { value: "audio", label: "Audio" }
 ];
 
 function extensionOf(filePath) {
@@ -184,6 +234,10 @@ function selectedRadio(name) {
 
 function selectedDocumentPdfEngine() {
   return documentPdfEngine?.value || "office";
+}
+
+function selectedMediaEncodingMode() {
+  return mediaEncodingMode?.value || "auto";
 }
 
 function selectedFileNameFormat() {
@@ -249,6 +303,10 @@ function loadSettings() {
     documentPdfEngine.value = saved.documentPdfEngine;
   }
 
+  if (mediaEncodingMode && ["auto", "cpu"].includes(saved?.mediaEncodingMode)) {
+    mediaEncodingMode.value = saved.mediaEncodingMode;
+  }
+
   const fileNameFormat = saved?.fileNameFormat || {};
 
   if (fileNameUsePrefix) {
@@ -282,6 +340,7 @@ function saveSettings() {
   try {
     window.localStorage?.setItem(settingsStorageKey, JSON.stringify({
       documentPdfEngine: selectedDocumentPdfEngine(),
+      mediaEncodingMode: selectedMediaEncodingMode(),
       fileNameFormat: selectedFileNameFormat()
     }));
   } catch {
@@ -303,6 +362,14 @@ function defaultFileTarget(filePath) {
 
   if (kind === "document") {
     return "pdf";
+  }
+
+  if (kind === "video") {
+    return extension === ".mp4" ? "mp3" : "mp4";
+  }
+
+  if (kind === "audio") {
+    return extension === ".mp3" ? "wav" : "mp3";
   }
 
   return "";
@@ -342,11 +409,23 @@ function fileTargetOptions(file) {
     }
   }
 
+  if (file.kind === "video") {
+    return [...videoFormats, ...audioFormats];
+  }
+
+  if (file.kind === "audio") {
+    return audioFormats;
+  }
+
   return [];
 }
 
 function formatLabel(value) {
-  return outputFormatLabels.get(value) || documentFormatLabels.get(value) || String(value).toUpperCase();
+  return outputFormatLabels.get(value)
+    || documentFormatLabels.get(value)
+    || videoFormatLabels.get(value)
+    || audioFormatLabels.get(value)
+    || String(value).toUpperCase();
 }
 
 function pickerKey(type, id = "bulk") {
@@ -373,11 +452,23 @@ function filteredFormats(query, formats) {
 }
 
 function formatGroupFor(value) {
-  return documentFormatLabels.has(value) ? "document" : "image";
+  if (documentFormatLabels.has(value)) {
+    return "document";
+  }
+
+  if (videoFormatLabels.has(value)) {
+    return "video";
+  }
+
+  if (audioFormatLabels.has(value)) {
+    return "audio";
+  }
+
+  return "image";
 }
 
 function formatGroupsFor(formats) {
-  const available = new Set(formats.map((format) => formatGroupFor(format.value)));
+  const available = new Set(formats.map((format) => format.group || formatGroupFor(format.value)));
   return formatGroups.filter((group) => available.has(group.value));
 }
 
@@ -388,7 +479,8 @@ function selectedFormatGroup(value, formats, requestedGroup) {
     return requestedGroup;
   }
 
-  const valueGroup = formatGroupFor(value);
+  const selectedFormat = formats.find((format) => format.value === value);
+  const valueGroup = selectedFormat?.group || formatGroupFor(value);
   if (available.some((group) => group.value === valueGroup)) {
     return valueGroup;
   }
@@ -401,7 +493,7 @@ function renderFormatPicker({ type, id = "bulk", value, formats, label }) {
   const isOpen = activeFormatPicker?.key === key;
   const query = isOpen ? activeFormatPicker.query : "";
   const activeGroup = isOpen ? selectedFormatGroup(value, formats, activeFormatPicker.group) : selectedFormatGroup(value, formats);
-  const visibleFormats = formats.filter((format) => formatGroupFor(format.value) === activeGroup);
+  const visibleFormats = formats.filter((format) => (format.group || formatGroupFor(format.value)) === activeGroup);
   const matches = filteredFormats(query, visibleFormats);
   const groups = formatGroupsFor(formats);
   const typeOptions = groups.map((group) => `
@@ -924,6 +1016,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 documentPdfEngine.addEventListener("change", saveSettings);
+mediaEncodingMode?.addEventListener("change", saveSettings);
 
 [
   fileNameUsePrefix,
@@ -1158,6 +1251,7 @@ convertFilesButton.addEventListener("click", async () => {
     output,
     imageToPdfMode: "individual",
     documentPdfEngine: selectedDocumentPdfEngine(),
+    mediaEncodingMode: selectedMediaEncodingMode(),
     pdfDpi: Number(pdfDpi.value)
   };
 

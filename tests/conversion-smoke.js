@@ -1,6 +1,10 @@
 const fs = require("fs/promises");
 const path = require("path");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+const ffmpegPath = require("ffmpeg-static");
 const { convertBatch } = require("../src/main/services/conversion-service");
+const execFileAsync = promisify(execFile);
 
 const root = path.resolve(__dirname, "..");
 const samples = path.join(root, "test_file");
@@ -12,6 +16,45 @@ async function requireFile(filePath) {
   if (!stat.isFile() || stat.size === 0) {
     throw new Error(`Expected output file at ${filePath}`);
   }
+}
+
+async function createMediaSamples() {
+  const audioPath = path.join(outputDir, "smoke-audio-source.wav");
+  const videoPath = path.join(outputDir, "smoke-video-source.mp4");
+
+  await execFileAsync(ffmpegPath, [
+    "-hide_banner",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=1000:duration=0.5",
+    "-c:a",
+    "pcm_s16le",
+    audioPath
+  ], { windowsHide: true });
+
+  await execFileAsync(ffmpegPath, [
+    "-hide_banner",
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc=size=160x90:rate=15:duration=0.5",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440:duration=0.5",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    videoPath
+  ], { windowsHide: true });
+
+  return { audioPath, videoPath };
 }
 
 async function main() {
@@ -33,6 +76,11 @@ async function main() {
         id: "png-to-pdf",
         path: path.join(samples, "rthjrtjjrtfjrtyf.png"),
         target: "pdf"
+      },
+      {
+        id: "png-to-jxl",
+        path: path.join(samples, "rthjrtjjrtfjrtyf.png"),
+        target: "jxl"
       },
       {
         id: "pdf-to-png",
@@ -169,6 +217,50 @@ async function main() {
   }
 
   await requireFile(icoInputResult[0].outputPaths[0]);
+
+  const { audioPath, videoPath } = await createMediaSamples();
+  const mediaResult = await convertBatch({
+    files: [
+      {
+        id: "audio-to-mp3",
+        path: audioPath,
+        target: "mp3"
+      },
+      {
+        id: "video-to-webm",
+        path: videoPath,
+        target: "webm"
+      },
+      {
+        id: "video-to-gif",
+        path: videoPath,
+        target: "gif"
+      },
+      {
+        id: "video-to-audio",
+        path: videoPath,
+        target: "mp3"
+      }
+    ],
+    output: {
+      mode: "custom",
+      directory: outputDir
+    },
+    mediaEncodingMode: "auto",
+    imageToPdfMode: "individual",
+    imagePdfDpi: 150,
+    pdfDpi: 96
+  });
+
+  for (const result of mediaResult) {
+    if (result.status !== "done") {
+      throw new Error(`${result.id} failed: ${result.error}`);
+    }
+
+    for (const outputPath of result.outputPaths) {
+      await requireFile(outputPath);
+    }
+  }
 
   console.log(`Smoke conversion outputs written to ${outputDir}`);
 }

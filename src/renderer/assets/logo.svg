@@ -1,0 +1,20 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Powerful Converter logo</title>
+  <desc id="desc">A modern conversion mark with two document panels and crossing arrows.</desc>
+  <rect width="128" height="128" rx="28" fill="#102A3A"/>
+  <path d="M24 35C24 28.9249 28.9249 24 35 24H93C99.0751 24 104 28.9249 104 35V93C104 99.0751 99.0751 104 93 104H35C28.9249 104 24 99.0751 24 93V35Z" fill="url(#paint0_linear)"/>
+  <path d="M39 35H65L77 47V86C77 90.4183 73.4183 94 69 94H39C34.5817 94 31 90.4183 31 86V43C31 38.5817 34.5817 35 39 35Z" fill="#EAF7FB"/>
+  <path d="M65 35V47H77L65 35Z" fill="#BFE7F2"/>
+  <path d="M89 93H63L51 81V42C51 37.5817 54.5817 34 59 34H89C93.4183 34 97 37.5817 97 42V85C97 89.4183 93.4183 93 89 93Z" fill="#FFFFFF" fill-opacity="0.92"/>
+  <path d="M63 93V81H51L63 93Z" fill="#D7EFF6"/>
+  <path d="M45 60H79L70.5 51.5" stroke="#176B87" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M83 68H49L57.5 76.5" stroke="#23A6A8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="40" cy="45" r="3" fill="#23A6A8"/>
+  <circle cx="88" cy="82" r="3" fill="#176B87"/>
+  <defs>
+    <linearGradient id="paint0_linear" x1="24" y1="24" x2="104" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#23A6A8"/>
+      <stop offset="1" stop-color="#176B87"/>
+    </linearGradient>
+  </defs>
+</svg>

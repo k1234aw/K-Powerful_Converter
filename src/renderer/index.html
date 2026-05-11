@@ -5,6 +5,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; script-src 'self'; style-src 'self';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Powerful Converter</title>
+    <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
@@ -14,9 +15,10 @@
           <button id="settingsButton" class="icon-button settings-button" type="button" aria-label="Open settings" title="Settings">
             <span aria-hidden="true">...</span>
           </button>
+          <img class="app-logo" src="assets/logo.svg" alt="" aria-hidden="true">
           <div>
             <h1>Powerful Converter</h1>
-            <p>Convert images and PDFs without installing anything.</p>
+            <p>Convert images, PDFs, documents, audio, and video without installing anything.</p>
           </div>
         </div>
         <div class="topbar-actions">
@@ -53,7 +55,7 @@
         <section id="filesDropZone" class="drop-zone">
           <div class="drop-copy">
             <strong>Drop files here</strong>
-            <span>One-to-one conversion for images, PDFs, and Office documents.</span>
+            <span>One-to-one conversion for images, PDFs, Office documents, audio, and video.</span>
           </div>
         </section>
 
@@ -162,7 +164,7 @@
         <div class="settings-header">
           <div>
             <h2 id="settingsTitle">Settings</h2>
-            <p>Choose how Office files become PDF. Everything runs locally on this computer.</p>
+            <p>Choose local conversion engines and file naming.</p>
           </div>
           <button id="closeSettingsButton" class="icon-button" type="button" aria-label="Close settings">x</button>
         </div>
@@ -172,6 +174,13 @@
             <option value="office">Microsoft Office</option>
             <option value="libreoffice">Local LibreOffice / soffice</option>
             <option value="auto">Auto local fallback</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <label class="control-label" for="mediaEncodingMode">Video encoding</label>
+          <select id="mediaEncodingMode">
+            <option value="auto">Auto GPU if available</option>
+            <option value="cpu">CPU only</option>
           </select>
         </div>
         <div class="setting-block">
