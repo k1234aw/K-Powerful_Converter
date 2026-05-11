@@ -7,6 +7,11 @@ dist-*/
 out/
 build/
 release/
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.blockmap
 
 # Electron / packaging scratch
 .asar-stage-*/
@@ -43,3 +48,7 @@ Desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Stale root-level copies; active files live under src/
+/index.html
+/main.js
