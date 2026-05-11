@@ -29,6 +29,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+AGENTS.md
 
 # Test and coverage output
 coverage/
