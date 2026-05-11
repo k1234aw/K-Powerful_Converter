@@ -56,4 +56,3 @@ src/renderer/   App interface
 tests/          Smoke tests
 ```
 
-Generated folders such as `node_modules/`, `dist/`, `dist-*`, `.asar-stage-*`, and `test_file/` are ignored by Git.
