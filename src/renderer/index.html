@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; script-src 'self'; style-src 'self';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Powerful Converter</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div class="topbar-title">
+          <button id="settingsButton" class="icon-button settings-button" type="button" aria-label="Open settings" title="Settings">
+            <span aria-hidden="true">...</span>
+          </button>
+          <div>
+            <h1>Powerful Converter</h1>
+            <p>Convert images and PDFs without installing anything.</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button id="addFilesButton" class="primary-button" type="button">
+            <span class="button-icon">+</span>
+            Add files
+          </button>
+          <button id="clearButton" class="ghost-button" type="button">Clear</button>
+        </div>
+      </section>
+
+      <section class="tabs" aria-label="Converter pages">
+        <button class="tab-button is-active" type="button" data-page="files">File converter</button>
+        <button class="tab-button" type="button" data-page="imagePdf">Image to PDF</button>
+      </section>
+
+      <section class="controls" aria-label="Conversion settings">
+        <div class="control-group">
+          <span class="control-label">Save to</span>
+          <label class="radio-option">
+            <input type="radio" name="outputMode" value="same" checked>
+            Same folder
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="outputMode" value="custom">
+            Selected folder
+          </label>
+          <button id="chooseFolderButton" class="small-button" type="button">Choose</button>
+          <span id="selectedFolder" class="folder-label">No folder selected</span>
+        </div>
+      </section>
+
+      <section id="filesPage" class="page is-active">
+        <section id="filesDropZone" class="drop-zone">
+          <div class="drop-copy">
+            <strong>Drop files here</strong>
+            <span>One-to-one conversion for images, PDFs, and Office documents.</span>
+          </div>
+        </section>
+
+        <section class="controls page-controls" aria-label="File conversion settings">
+          <div class="control-group">
+            <label class="control-label" for="pdfDpi">PDF to PNG</label>
+            <select id="pdfDpi">
+              <option value="96">96 DPI</option>
+              <option value="150" selected>150 DPI</option>
+              <option value="300">300 DPI</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="queue-section">
+          <div class="queue-header">
+            <h2>Files</h2>
+            <button id="convertFilesButton" class="primary-button" type="button" disabled>Convert</button>
+          </div>
+          <div class="bulk-bar" aria-label="File bulk actions">
+            <label class="check-option">
+              <input id="selectAllFiles" type="checkbox">
+              Select all
+            </label>
+            <label class="control-label" for="bulkFileTarget">Convert selected to</label>
+            <div id="bulkFileTarget" class="format-picker" data-picker-type="bulk"></div>
+            <button id="applyFileTargetButton" class="small-button" type="button" disabled>Apply</button>
+            <button id="removeSelectedFilesButton" class="small-button danger-button" type="button" disabled>Remove selected</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Select</th>
+                  <th>File</th>
+                  <th>Type</th>
+                  <th>Convert to</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="fileTableBody">
+                <tr class="empty-row">
+                  <td colspan="6">No files added yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="imagePdfPage" class="page">
+        <section id="imagePdfDropZone" class="drop-zone">
+          <div class="drop-copy">
+            <strong>Drop images here</strong>
+            <span>JPG, JPEG, and PNG only. Drag thumbnails to reorder before combining.</span>
+          </div>
+        </section>
+
+        <section class="controls page-controls" aria-label="Image PDF settings">
+          <div class="control-group">
+            <span class="control-label">PDF output</span>
+            <label class="radio-option">
+              <input type="radio" name="imageToPdfMode" value="individual" checked>
+              One each
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="imageToPdfMode" value="combine">
+              Combine
+            </label>
+          </div>
+
+          <div class="control-group dpi-group">
+            <label class="control-label" for="imagePdfDpi">Image DPI</label>
+            <input id="imagePdfDpi" type="range" min="96" max="300" value="150">
+            <input id="imagePdfDpiNumber" class="dpi-number" type="number" min="96" max="300" value="150">
+          </div>
+        </section>
+
+        <section class="queue-section">
+          <div class="queue-header">
+            <h2>Images</h2>
+            <button id="convertImagePdfButton" class="primary-button" type="button" disabled>Create PDF</button>
+          </div>
+          <div class="bulk-bar" aria-label="Image PDF bulk actions">
+            <label class="check-option">
+              <input id="selectAllImages" type="checkbox">
+              Select all
+            </label>
+            <span class="control-label">Convert selected to</span>
+            <select id="bulkImageTarget" disabled>
+              <option value="pdf">PDF</option>
+            </select>
+            <button id="applyImageTargetButton" class="small-button" type="button" disabled>Apply</button>
+            <button id="removeSelectedImagesButton" class="small-button danger-button" type="button" disabled>Remove selected</button>
+          </div>
+          <div id="imagePdfGrid" class="image-grid">
+            <div class="empty-grid">No images added yet.</div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="settingsPanel" class="settings-backdrop" aria-hidden="true" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="settings-header">
+          <div>
+            <h2 id="settingsTitle">Settings</h2>
+            <p>Choose how Office files become PDF. Everything runs locally on this computer.</p>
+          </div>
+          <button id="closeSettingsButton" class="icon-button" type="button" aria-label="Close settings">x</button>
+        </div>
+        <div class="setting-row">
+          <label class="control-label" for="documentPdfEngine">Office to PDF</label>
+          <select id="documentPdfEngine">
+            <option value="office">Microsoft Office</option>
+            <option value="libreoffice">Local LibreOffice / soffice</option>
+            <option value="auto">Auto local fallback</option>
+          </select>
+        </div>
+        <div class="setting-block">
+          <h3>File name format</h3>
+          <label class="check-option">
+            <input id="fileNameUsePrefix" type="checkbox">
+            Prefix
+          </label>
+          <input id="fileNamePrefix" class="text-input" type="text" placeholder="Example: new_" disabled>
+          <label class="check-option">
+            <input id="fileNameUseOriginal" type="checkbox" checked>
+            Original name
+          </label>
+          <label class="check-option">
+            <input id="fileNameUseSuffix" type="checkbox">
+            Suffix
+          </label>
+          <input id="fileNameSuffix" class="text-input" type="text" placeholder="Example: _done" disabled>
+          <label class="check-option">
+            <input id="fileNameUseConverted" type="checkbox">
+            Converted_File
+          </label>
+          <div class="file-name-preview">
+            <span class="control-label">Preview</span>
+            <span id="fileNamePreview">OriginalName</span>
+          </div>
+        </div>
+        <p class="settings-note">
+          Microsoft Office uses Word, PowerPoint, or Excel if they are installed. LibreOffice uses a local soffice install and never uploads files.
+        </p>
+      </section>
+    </div>
+
+    <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>
