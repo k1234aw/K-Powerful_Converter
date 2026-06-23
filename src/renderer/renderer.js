@@ -144,7 +144,7 @@ const outputFormats = [
 const outputFormatLabels = new Map(outputFormats.map((format) => [format.value, format.label]));
 const documentFormats = [
   { value: "pdf", label: "PDF", keywords: "pdf document" },
-  { value: "md", label: "MD (No OCR)", keywords: "md markdown text document no ocr embedded text" },
+  { value: "md", label: "Fast Plain MD (No OCR)", keywords: "md markdown text document no ocr embedded text fast plain" },
   { value: "md_ocr", label: "MD (OCR Normal)", keywords: "md markdown text document ocr normal scanned image" },
   { value: "doc", label: "DOC", keywords: "doc word document" },
   { value: "docx", label: "DOCX", keywords: "docx word document" },

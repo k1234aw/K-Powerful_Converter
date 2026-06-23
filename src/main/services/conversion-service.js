@@ -1767,29 +1767,23 @@ $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath '${escapePowerShel
 `;
 }
 
-async function readPdfEmbeddedText(filePath, tempTextPath) {
+async function writePdfEmbeddedText(filePath, outputPath) {
   await execFileAsync(
     popplerToolPath("pdftotext"),
-    ["-q", "-enc", "UTF-8", "-eol", "unix", "-nopgbrk", filePath, tempTextPath],
+    ["-q", "-enc", "UTF-8", "-eol", "unix", "-nopgbrk", filePath, outputPath],
     { windowsHide: true, timeout: 180000 }
   );
-
-  return fs.readFile(tempTextPath, "utf8");
 }
 
 async function convertPdfToMarkdown(filePath, output, onProgress = () => {}) {
   const outputDir = outputDirectoryFor(filePath, output);
   const outputPath = await uniquePath(path.join(outputDir, `${outputBaseNameFor(filePath, output)}.md`));
-  const tempTextPath = await uniquePath(path.join(outputDir, `${baseNameWithoutExtension(outputPath)}_text_extract.txt`));
 
   try {
-    onProgress({ status: "running", message: "Extracting embedded PDF text..." });
-    const text = await readPdfEmbeddedText(filePath, tempTextPath);
-    await fs.writeFile(outputPath, pdfTextToMarkdown(text, filePath, { includePageHeadings: false }), "utf8");
+    onProgress({ status: "running", message: "Extracting embedded PDF text without OCR..." });
+    await writePdfEmbeddedText(filePath, outputPath);
   } catch (error) {
     throw new Error(`PDF to Markdown conversion failed. ${error.stderr || error.message}`);
-  } finally {
-    await fs.unlink(tempTextPath).catch(() => {});
   }
 
   return [outputPath];
