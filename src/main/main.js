@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
-const { convertBatchInUtilityProcess } = require("./services/conversion-worker-client");
+const { convertBatch } = require("./services/conversion-service");
 
 let mainWindow;
 const appIconPath = path.join(__dirname, "..", "renderer", "assets", "logo.ico");
@@ -210,14 +210,13 @@ ipcMain.handle("dialog:select-folder", async () => {
 ipcMain.handle("conversion:start", async (_event, request) => {
   const sender = _event.sender;
 
-  return convertBatchInUtilityProcess(
+  return convertBatch(
     request,
     (progress) => {
       if (!sender.isDestroyed()) {
         sender.send("conversion:progress", progress);
       }
-    },
-    logStartup
+    }
   );
 });
 
