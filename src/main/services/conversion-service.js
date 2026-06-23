@@ -104,6 +104,14 @@ function cleanTarget(target) {
     return "jxl";
   }
 
+  if (["markdown", "md-no-ocr", "md_no_ocr"].includes(normalized)) {
+    return "md";
+  }
+
+  if (["mdocr", "md-ocr", "markdown-ocr", "markdown_ocr"].includes(normalized)) {
+    return "md_ocr";
+  }
+
   return normalized;
 }
 
@@ -113,7 +121,7 @@ function isSupportedTarget(kind, target) {
   }
 
   if (kind === "pdf") {
-    return target === "md" || OUTPUT_TARGETS.has(target);
+    return target === "md" || target === "md_ocr" || OUTPUT_TARGETS.has(target);
   }
 
   if (kind === "document") {
@@ -397,6 +405,10 @@ function popplerBinaryPath() {
     "Library",
     "bin"
   );
+}
+
+function popplerToolPath(toolName) {
+  return path.join(popplerBinaryPath(), process.platform === "win32" ? `${toolName}.exe` : toolName);
 }
 
 function imagePdfDpiFromRequest(request) {
@@ -1592,6 +1604,23 @@ async function convertPdfToPng(filePath, dpi, output) {
   const outputDir = outputDirectoryFor(filePath, output);
   const baseName = outputBaseNameFor(filePath, output);
   const tempPrefix = `${baseName}_page_tmp_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  const generated = await renderPdfPagesToPng(filePath, dpi, outputDir, tempPrefix);
+
+  const outputPaths = [];
+
+  for (let index = 0; index < generated.length; index += 1) {
+    const sourcePath = generated[index];
+    const pageNumber = String(index + 1).padStart(3, "0");
+    const finalPath = await uniquePath(path.join(outputDir, `${baseName}_page-${pageNumber}.png`));
+
+    await fs.rename(sourcePath, finalPath);
+    outputPaths.push(finalPath);
+  }
+
+  return outputPaths;
+}
+
+async function renderPdfPagesToPng(filePath, dpi, outputDir, tempPrefix) {
   const tempRoot = path.join(outputDir, tempPrefix);
   const poppler = new Poppler(popplerBinaryPath());
 
@@ -1604,24 +1633,14 @@ async function convertPdfToPng(filePath, dpi, output) {
   const entries = await fs.readdir(outputDir);
   const generated = entries
     .filter((entry) => entry.startsWith(tempPrefix) && entry.toLowerCase().endsWith(".png"))
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((entry) => path.join(outputDir, entry));
 
   if (generated.length === 0) {
     throw new Error("PDF conversion finished but no PNG pages were created.");
   }
 
-  const outputPaths = [];
-
-  for (let index = 0; index < generated.length; index += 1) {
-    const sourcePath = path.join(outputDir, generated[index]);
-    const pageNumber = String(index + 1).padStart(3, "0");
-    const finalPath = await uniquePath(path.join(outputDir, `${baseName}_page-${pageNumber}.png`));
-
-    await fs.rename(sourcePath, finalPath);
-    outputPaths.push(finalPath);
-  }
-
-  return outputPaths;
+  return generated;
 }
 
 async function convertPdfToImageFormat(filePath, target, dpi, output, options = {}) {
@@ -1661,8 +1680,9 @@ function normalizePdfPageTextForMarkdown(pageText) {
     .trim();
 }
 
-function pdfTextToMarkdown(text, filePath) {
+function pdfTextToMarkdown(text, filePath, options = {}) {
   const title = markdownHeadingText(baseNameWithoutExtension(filePath));
+  const includePageHeadings = options.includePageHeadings !== false;
   const pages = String(text || "")
     .replace(/\u0000/g, "")
     .split("\f")
@@ -1675,27 +1695,165 @@ function pdfTextToMarkdown(text, filePath) {
 
   const body = pages.length === 1
     ? pages[0]
-    : pages.map((pageText, index) => `## Page ${index + 1}\n\n${pageText}`).join("\n\n");
+    : includePageHeadings
+      ? pages.map((pageText, index) => `## Page ${index + 1}\n\n${pageText}`).join("\n\n")
+      : normalizePdfPageTextForMarkdown(pages.join("\n\n"));
 
   return `# ${title}\n\n${body}\n`;
 }
 
-async function convertPdfToMarkdown(filePath, output) {
+function windowsOcrPowerShellScript(inputJsonPath, outputJsonPath) {
+  return `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+[Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null
+[Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime] | Out-Null
+[Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime] | Out-Null
+
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+  $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1
+})[0]
+
+function Await-WinRt($operation, $resultType) {
+  $asTask = $asTaskGeneric.MakeGenericMethod($resultType)
+  $task = $asTask.Invoke($null, @($operation))
+  try {
+    $task.Wait() | Out-Null
+  } catch {
+    if ($task.Exception) {
+      throw $task.Exception.ToString()
+    }
+
+    throw
+  }
+  return $task.Result
+}
+
+$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if ($null -eq $engine) {
+  throw 'Windows OCR is not available. Install a Windows OCR language pack or use MD (No OCR).'
+}
+
+$payload = Get-Content -LiteralPath '${escapePowerShellString(inputJsonPath)}' -Raw | ConvertFrom-Json
+$items = @($payload.pages)
+$results = New-Object System.Collections.Generic.List[object]
+
+foreach ($item in $items) {
+  $stream = $null
+  $bitmap = $null
+  try {
+    $file = Await-WinRt ([Windows.Storage.StorageFile]::GetFileFromPathAsync([string]$item.path)) ([Windows.Storage.StorageFile])
+    $stream = Await-WinRt ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $decoder = Await-WinRt ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $bitmap = Await-WinRt ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $ocrResult = Await-WinRt ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+    $results.Add([PSCustomObject]@{
+      page = [int]$item.page
+      text = [string]$ocrResult.Text
+    }) | Out-Null
+  } catch {
+    throw "OCR failed on page $($item.page): $($_.Exception.ToString())"
+  } finally {
+    if ($bitmap -ne $null) {
+      $bitmap.Dispose()
+    }
+    if ($stream -ne $null) {
+      $stream.Dispose()
+    }
+  }
+}
+
+$results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath '${escapePowerShellString(outputJsonPath)}' -Encoding UTF8
+`;
+}
+
+async function readPdfEmbeddedText(filePath, tempTextPath) {
+  await execFileAsync(
+    popplerToolPath("pdftotext"),
+    ["-q", "-enc", "UTF-8", "-eol", "unix", "-nopgbrk", filePath, tempTextPath],
+    { windowsHide: true, timeout: 180000 }
+  );
+
+  return fs.readFile(tempTextPath, "utf8");
+}
+
+async function convertPdfToMarkdown(filePath, output, onProgress = () => {}) {
   const outputDir = outputDirectoryFor(filePath, output);
   const outputPath = await uniquePath(path.join(outputDir, `${outputBaseNameFor(filePath, output)}.md`));
-  const poppler = new Poppler(popplerBinaryPath());
-
-  let text = "";
+  const tempTextPath = await uniquePath(path.join(outputDir, `${baseNameWithoutExtension(outputPath)}_text_extract.txt`));
 
   try {
-    text = await poppler.pdfToText(filePath, undefined, {
-      outputEncoding: "UTF-8"
-    });
+    onProgress({ status: "running", message: "Extracting embedded PDF text..." });
+    const text = await readPdfEmbeddedText(filePath, tempTextPath);
+    await fs.writeFile(outputPath, pdfTextToMarkdown(text, filePath, { includePageHeadings: false }), "utf8");
   } catch (error) {
     throw new Error(`PDF to Markdown conversion failed. ${error.stderr || error.message}`);
+  } finally {
+    await fs.unlink(tempTextPath).catch(() => {});
   }
 
-  await fs.writeFile(outputPath, pdfTextToMarkdown(text, filePath), "utf8");
+  return [outputPath];
+}
+
+function ocrResultsToMarkdown(results, filePath) {
+  const ordered = [...results]
+    .sort((a, b) => Number(a.page || 0) - Number(b.page || 0))
+    .map((item) => normalizePdfPageTextForMarkdown(item.text))
+    .filter(Boolean);
+
+  return pdfTextToMarkdown(ordered.join("\f"), filePath);
+}
+
+async function convertPdfToOcrMarkdown(filePath, output, onProgress = () => {}) {
+  if (process.platform !== "win32") {
+    throw new Error("PDF OCR to Markdown uses Windows OCR and is only available on Windows.");
+  }
+
+  const outputDir = outputDirectoryFor(filePath, output);
+  const outputPath = await uniquePath(path.join(outputDir, `${outputBaseNameFor(filePath, output)}.md`));
+  const tempDir = await fs.mkdtemp(path.join(outputDir, ".powerful-converter-ocr-"));
+  const tempPrefix = `ocr_page_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+  const inputJsonPath = path.join(tempDir, "ocr-input.json");
+  const outputJsonPath = path.join(tempDir, "ocr-output.json");
+  const tempScriptPath = path.join(tempDir, "windows-ocr.ps1");
+  let pagePaths = [];
+
+  try {
+    onProgress({ status: "running", message: "Rendering PDF pages for OCR..." });
+    pagePaths = await renderPdfPagesToPng(filePath, 200, tempDir, tempPrefix);
+    const inputItems = pagePaths.map((pagePath, index) => ({
+      page: index + 1,
+      path: pagePath
+    }));
+
+    await fs.writeFile(inputJsonPath, JSON.stringify({ pages: inputItems }), "utf8");
+    await fs.writeFile(tempScriptPath, windowsOcrPowerShellScript(inputJsonPath, outputJsonPath), "utf8");
+
+    onProgress({ status: "running", message: `Running Windows OCR on ${pagePaths.length} page${pagePaths.length === 1 ? "" : "s"}...` });
+    await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tempScriptPath],
+      { windowsHide: true, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }
+    );
+
+    const rawResults = (await fs.readFile(outputJsonPath, "utf8")).replace(/^\uFEFF/, "");
+    const parsed = JSON.parse(rawResults);
+    const results = Array.isArray(parsed) ? parsed : [parsed];
+
+    await fs.writeFile(outputPath, ocrResultsToMarkdown(results, filePath), "utf8");
+  } catch (error) {
+    throw new Error(`PDF OCR to Markdown conversion failed. ${error.stderr || error.message}`);
+  } finally {
+    for (const pagePath of pagePaths) {
+      await fs.unlink(pagePath).catch(() => {});
+    }
+
+    await fs.unlink(inputJsonPath).catch(() => {});
+    await fs.unlink(outputJsonPath).catch(() => {});
+    await fs.unlink(tempScriptPath).catch(() => {});
+    await fs.rmdir(tempDir).catch(() => {});
+  }
+
   return [outputPath];
 }
 
@@ -1763,7 +1921,15 @@ async function convertSingle(item, request, onProgress = () => {}) {
   }
 
   if (kind === "pdf" && target === "md") {
-    return convertPdfToMarkdown(item.path, request.output);
+    return convertPdfToMarkdown(item.path, request.output, (progress) => {
+      onProgress({ id: item.id, ...progress });
+    });
+  }
+
+  if (kind === "pdf" && target === "md_ocr") {
+    return convertPdfToOcrMarkdown(item.path, request.output, (progress) => {
+      onProgress({ id: item.id, ...progress });
+    });
   }
 
   return convertPdfToImageFormat(item.path, target, Number(request.pdfDpi || 150), request.output, itemOptions);
@@ -1839,6 +2005,8 @@ module.exports = {
   convertImagesToSinglePdf,
   convertMediaFormat,
   convertOfficeDocument,
+  convertPdfToMarkdown,
+  convertPdfToOcrMarkdown,
   convertPdfToImageFormat,
   convertPdfToPng,
   getKind,

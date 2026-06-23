@@ -8,7 +8,7 @@ Powerful Converter is an Electron desktop app that runs conversions locally on y
 
 - Convert images between common formats including PNG, JPG, GIF, TIFF, BMP, WebP, ICO, AVIF, JPEG 2000, JPEG XL, SVG, and EMF.
 - Convert images to individual PDFs or combine multiple images into one PDF.
-- Convert PDF pages to image formats.
+- Convert PDF pages to image formats, or export PDFs to Markdown with either embedded text extraction or Windows OCR.
 - Convert Word, PowerPoint, Excel, and text-like documents to PDF or related document formats through Microsoft Office, LibreOffice, or automatic fallback.
 - Convert video between 3GP, AVI, FLV, MKV, MOV, MP4, OGV, WebM, WMV, and TS, create GIFs from videos up to 10 seconds, or extract video audio to supported audio formats.
 - Convert audio between AAC, AIFF, ALAC, AMR, FLAC, M4A, MP3, OGG, WAV, and WMA.

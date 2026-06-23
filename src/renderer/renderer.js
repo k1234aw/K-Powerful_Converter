@@ -144,7 +144,8 @@ const outputFormats = [
 const outputFormatLabels = new Map(outputFormats.map((format) => [format.value, format.label]));
 const documentFormats = [
   { value: "pdf", label: "PDF", keywords: "pdf document" },
-  { value: "md", label: "MD", keywords: "md markdown text document" },
+  { value: "md", label: "MD (No OCR)", keywords: "md markdown text document no ocr embedded text" },
+  { value: "md_ocr", label: "MD (OCR Normal)", keywords: "md markdown text document ocr normal scanned image" },
   { value: "doc", label: "DOC", keywords: "doc word document" },
   { value: "docx", label: "DOCX", keywords: "docx word document" },
   { value: "rtf", label: "RTF", keywords: "rtf rich text document" },
@@ -460,6 +461,7 @@ function fileTargetOptions(file) {
   if (file.kind === "pdf") {
     return [
       documentFormats.find((format) => format.value === "md"),
+      documentFormats.find((format) => format.value === "md_ocr"),
       ...outputFormats
     ];
   }
