@@ -1,9 +1,9 @@
 const path = require("path");
 const fs = require("fs");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { convertBatchInUtilityProcess } = require("./services/conversion-worker-client");
 
 let mainWindow;
-let conversionService = null;
 const appIconPath = path.join(__dirname, "..", "renderer", "assets", "logo.ico");
 
 function logStartup(message, detail = "") {
@@ -14,14 +14,6 @@ function logStartup(message, detail = "") {
   } catch {
     // Startup logging must never stop the app from opening.
   }
-}
-
-function getConversionService() {
-  if (!conversionService) {
-    conversionService = require("./services/conversion-service");
-  }
-
-  return conversionService;
 }
 
 function createWindow() {
@@ -217,11 +209,16 @@ ipcMain.handle("dialog:select-folder", async () => {
 
 ipcMain.handle("conversion:start", async (_event, request) => {
   const sender = _event.sender;
-  const { convertBatch } = getConversionService();
 
-  return convertBatch(request, (progress) => {
-    sender.send("conversion:progress", progress);
-  });
+  return convertBatchInUtilityProcess(
+    request,
+    (progress) => {
+      if (!sender.isDestroyed()) {
+        sender.send("conversion:progress", progress);
+      }
+    },
+    logStartup
+  );
 });
 
 ipcMain.handle("dialog:message", async (_event, options) => {

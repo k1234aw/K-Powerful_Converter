@@ -53,3 +53,8 @@ Desktop.ini
 # Stale root-level copies; active files live under src/
 /index.html
 /main.js
+/renderer.js
+/styles.css
+
+# Optional local runtime experiments
+vendor/

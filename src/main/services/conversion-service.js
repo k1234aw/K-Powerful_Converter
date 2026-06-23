@@ -113,7 +113,7 @@ function isSupportedTarget(kind, target) {
   }
 
   if (kind === "pdf") {
-    return OUTPUT_TARGETS.has(target);
+    return target === "md" || OUTPUT_TARGETS.has(target);
   }
 
   if (kind === "document") {
@@ -472,6 +472,46 @@ function cleanMediaEncodingMode(mode) {
   return MEDIA_ENCODING_MODES.has(normalized) ? normalized : "auto";
 }
 
+function clampInteger(value, min, max, fallback) {
+  const parsed = Number(value);
+
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function cleanMediaOptions(options = {}) {
+  const videoResolution = ["original", "1440", "1080", "720"].includes(String(options.videoResolution))
+    ? String(options.videoResolution)
+    : "original";
+  const gifResolution = ["original", "720", "640", "480", "360"].includes(String(options.gifResolution))
+    ? String(options.gifResolution)
+    : "640";
+
+  return {
+    videoResolution,
+    gifResolution,
+    gifFps: clampInteger(options.gifFps, 1, 30, 15),
+    audioNormalize: Boolean(options.audioNormalize)
+  };
+}
+
+function cleanImageOptions(options = {}) {
+  return {
+    quality: clampInteger(options.quality, 1, 100, 92)
+  };
+}
+
+function downscaleVideoFilter(height) {
+  if (!height || height === "original") {
+    return null;
+  }
+
+  return `scale=-2:min(${height}\\,ih):flags=lanczos`;
+}
+
 async function mediaDurationSeconds(filePath) {
   try {
     await execFileAsync(ffmpegBinaryPath(), ["-hide_banner", "-i", filePath], {
@@ -569,64 +609,81 @@ async function h264VideoArgs(encodingMode = "auto") {
   };
 }
 
-async function videoCodecArgsFor(target, encodingMode = "auto") {
+async function videoCodecArgsFor(target, encodingMode = "auto", options = {}) {
+  const mediaOptions = cleanMediaOptions(options);
+
   if (target === "gif") {
+    const filters = [`fps=${mediaOptions.gifFps}`];
+    const scaleFilter = downscaleVideoFilter(mediaOptions.gifResolution);
+
+    if (scaleFilter) {
+      filters.push(scaleFilter);
+    }
+
     return {
-      args: ["-vf", "fps=15,scale='min(640,iw)':-2:flags=lanczos", "-loop", "0"],
+      args: ["-vf", filters.join(","), "-loop", "0"],
       label: "CPU GIF"
     };
   }
 
+  const videoFilters = [];
+  const scaleFilter = downscaleVideoFilter(mediaOptions.videoResolution);
+
+  if (scaleFilter) {
+    videoFilters.push(scaleFilter);
+  }
+
   if (target === "webm") {
     return {
-      args: ["-c:v", "libvpx", "-deadline", "good", "-cpu-used", "4", "-b:v", "2M", "-c:a", "libopus"],
+      args: [...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-c:v", "libvpx", "-deadline", "good", "-cpu-used", "4", "-b:v", "2M", "-c:a", "libopus"],
       label: "CPU WebM"
     };
   }
 
   if (target === "ogv") {
     return {
-      args: ["-c:v", "libtheora", "-q:v", "7", "-c:a", "libvorbis", "-q:a", "5"],
+      args: [...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-c:v", "libtheora", "-q:v", "7", "-c:a", "libvorbis", "-q:a", "5"],
       label: "CPU OGV"
     };
   }
 
   if (target === "wmv") {
     return {
-      args: ["-c:v", "wmv2", "-q:v", "4", "-c:a", "wmav2"],
+      args: [...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-c:v", "wmv2", "-q:v", "4", "-c:a", "wmav2"],
       label: "CPU WMV"
     };
   }
 
   if (target === "avi") {
     return {
-      args: ["-c:v", "mpeg4", "-q:v", "4", "-c:a", "libmp3lame", "-q:a", "3"],
+      args: [...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-c:v", "mpeg4", "-q:v", "4", "-c:a", "libmp3lame", "-q:a", "3"],
       label: "CPU AVI"
     };
   }
 
   if (target === "flv") {
     return {
-      args: ["-c:v", "flv", "-q:v", "4", "-c:a", "libmp3lame", "-q:a", "3"],
+      args: [...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-c:v", "flv", "-q:v", "4", "-c:a", "libmp3lame", "-q:a", "3"],
       label: "CPU FLV"
     };
   }
 
   if (target === "3gp") {
     return {
-      args: ["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "baseline", "-level", "3.0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"],
+      args: ["-c:v", "libx264", "-preset", "veryfast", "-profile:v", "baseline", "-level", "3.0", ...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k"],
       label: "CPU 3GP"
     };
   }
 
   const h264 = await h264VideoArgs(encodingMode);
   return {
-    args: [...h264.args, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"],
+    args: [...h264.args, ...(videoFilters.length > 0 ? ["-vf", videoFilters.join(",")] : []), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"],
     label: h264.label
   };
 }
 
-function audioCodecArgsFor(target) {
+function audioCodecArgsFor(target, options = {}) {
+  const mediaOptions = cleanMediaOptions(options);
   const argsByTarget = {
     aac: ["-c:a", "aac", "-b:a", "192k"],
     aiff: ["-c:a", "pcm_s16be"],
@@ -639,9 +696,14 @@ function audioCodecArgsFor(target) {
     wav: ["-c:a", "pcm_s16le"],
     wma: ["-c:a", "wmav2", "-b:a", "192k"]
   };
+  const args = [...(argsByTarget[target] || ["-c:a", "aac", "-b:a", "192k"])];
+
+  if (mediaOptions.audioNormalize) {
+    args.push("-af", "loudnorm=I=-16:TP=-1.5:LRA=11");
+  }
 
   return {
-    args: argsByTarget[target] || ["-c:a", "aac", "-b:a", "192k"],
+    args,
     label: "CPU audio"
   };
 }
@@ -699,7 +761,12 @@ function runFfmpeg(args, progressCallback = () => {}) {
   });
 }
 
-async function convertMediaFormat(filePath, target, output, inputKind, encodingMode = "auto", onProgress = () => {}) {
+async function convertMediaFormat(filePath, target, output, inputKind, encodingMode = "auto", options = {}, onProgress = () => {}) {
+  if (typeof options === "function") {
+    onProgress = options;
+    options = {};
+  }
+
   const binaryPath = ffmpegBinaryPath();
 
   if (!binaryPath) {
@@ -711,7 +778,7 @@ async function convertMediaFormat(filePath, target, output, inputKind, encodingM
   const outputPath = await uniquePath(path.join(outputDir, `${baseName}.${outputExtensionFor(target)}`));
   const isAudioTarget = AUDIO_TARGETS.has(target);
   const isGifTarget = target === "gif";
-  const codec = isAudioTarget ? audioCodecArgsFor(target) : await videoCodecArgsFor(target, encodingMode);
+  const codec = isAudioTarget ? audioCodecArgsFor(target, options) : await videoCodecArgsFor(target, encodingMode, options);
   const label = codec.label || "Converting";
   let durationSeconds = 0;
   let lastPercent = -1;
@@ -788,11 +855,12 @@ async function convertMediaFormat(filePath, target, output, inputKind, encodingM
   return [outputPath];
 }
 
-async function convertImageFormat(filePath, target, output) {
+async function convertImageFormat(filePath, target, output, options = {}) {
   const outputDir = outputDirectoryFor(filePath, output);
   const baseName = outputBaseNameFor(filePath, output);
   const outputPath = await uniquePath(path.join(outputDir, `${baseName}.${outputExtensionFor(target)}`));
   const image = (await imageSharp(filePath)).rotate();
+  const imageOptions = cleanImageOptions(options);
 
   if (target === "png") {
     await image.png({ compressionLevel: 9 }).toFile(outputPath);
@@ -800,7 +868,7 @@ async function convertImageFormat(filePath, target, output) {
   }
 
   if (target === "jpg") {
-    await image.flatten({ background: "#ffffff" }).jpeg({ quality: 92 }).toFile(outputPath);
+    await image.flatten({ background: "#ffffff" }).jpeg({ quality: imageOptions.quality }).toFile(outputPath);
     return [outputPath];
   }
 
@@ -815,7 +883,7 @@ async function convertImageFormat(filePath, target, output) {
   }
 
   if (target === "webp") {
-    await image.webp({ quality: 92 }).toFile(outputPath);
+    await image.webp({ quality: imageOptions.quality }).toFile(outputPath);
     return [outputPath];
   }
 
@@ -1440,7 +1508,7 @@ async function convertOfficeDocument(filePath, target, output, engine = "office"
   return convertDocumentWithOffice(filePath, target, output);
 }
 
-async function convertDocumentToImageFormat(filePath, target, request) {
+async function convertDocumentToImageFormat(filePath, target, request, options = {}) {
   const outputDir = outputDirectoryFor(filePath, request.output);
   const tempDir = await fs.mkdtemp(path.join(outputDir, ".powerful-converter-"));
   let tempPdfPath = null;
@@ -1458,7 +1526,8 @@ async function convertDocumentToImageFormat(filePath, target, request) {
       tempPdfPath,
       target,
       Number(request.pdfDpi || 150),
-      request.output
+      request.output,
+      options
     );
   } finally {
     if (tempPdfPath) {
@@ -1555,7 +1624,7 @@ async function convertPdfToPng(filePath, dpi, output) {
   return outputPaths;
 }
 
-async function convertPdfToImageFormat(filePath, target, dpi, output) {
+async function convertPdfToImageFormat(filePath, target, dpi, output, options = {}) {
   const pngPaths = await convertPdfToPng(filePath, dpi, output);
 
   if (target === "png") {
@@ -1565,11 +1634,69 @@ async function convertPdfToImageFormat(filePath, target, dpi, output) {
   const outputPaths = [];
 
   for (const pngPath of pngPaths) {
-    outputPaths.push(...await convertImageFormat(pngPath, target, { ...output, fileNameFormat: null }));
+    outputPaths.push(...await convertImageFormat(pngPath, target, { ...output, fileNameFormat: null }, options));
     await fs.unlink(pngPath);
   }
 
   return outputPaths;
+}
+
+function markdownHeadingText(value) {
+  return String(value || "PDF document")
+    .replace(/[_-]+/g, " ")
+    .replace(/[#*`[\]<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim() || "PDF document";
+}
+
+function normalizePdfPageTextForMarkdown(pageText) {
+  return String(pageText || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function pdfTextToMarkdown(text, filePath) {
+  const title = markdownHeadingText(baseNameWithoutExtension(filePath));
+  const pages = String(text || "")
+    .replace(/\u0000/g, "")
+    .split("\f")
+    .map(normalizePdfPageTextForMarkdown)
+    .filter(Boolean);
+
+  if (pages.length === 0) {
+    return `# ${title}\n\n_No extractable text found in this PDF._\n`;
+  }
+
+  const body = pages.length === 1
+    ? pages[0]
+    : pages.map((pageText, index) => `## Page ${index + 1}\n\n${pageText}`).join("\n\n");
+
+  return `# ${title}\n\n${body}\n`;
+}
+
+async function convertPdfToMarkdown(filePath, output) {
+  const outputDir = outputDirectoryFor(filePath, output);
+  const outputPath = await uniquePath(path.join(outputDir, `${outputBaseNameFor(filePath, output)}.md`));
+  const poppler = new Poppler(popplerBinaryPath());
+
+  let text = "";
+
+  try {
+    text = await poppler.pdfToText(filePath, undefined, {
+      outputEncoding: "UTF-8"
+    });
+  } catch (error) {
+    throw new Error(`PDF to Markdown conversion failed. ${error.stderr || error.message}`);
+  }
+
+  await fs.writeFile(outputPath, pdfTextToMarkdown(text, filePath), "utf8");
+  return [outputPath];
 }
 
 async function ensureOutputDirectory(output) {
@@ -1587,6 +1714,7 @@ async function ensureOutputDirectory(output) {
 async function convertSingle(item, request, onProgress = () => {}) {
   const kind = getKind(item.path);
   const target = cleanTarget(item.target);
+  const itemOptions = item.options || {};
 
   if (kind === "unsupported") {
     throw new Error("Unsupported file type.");
@@ -1605,12 +1733,12 @@ async function convertSingle(item, request, onProgress = () => {}) {
   }
 
   if (kind === "image") {
-    return convertImageFormat(item.path, target, request.output);
+    return convertImageFormat(item.path, target, request.output, itemOptions);
   }
 
   if (kind === "document") {
     if (OUTPUT_TARGETS.has(target)) {
-      return convertDocumentToImageFormat(item.path, target, request);
+      return convertDocumentToImageFormat(item.path, target, request, itemOptions);
     }
 
     if (!isSupportedDocumentTarget(item.path, target)) {
@@ -1627,13 +1755,18 @@ async function convertSingle(item, request, onProgress = () => {}) {
       request.output,
       kind,
       request.mediaEncodingMode,
+      itemOptions,
       (progress) => {
         onProgress({ id: item.id, ...progress });
       }
     );
   }
 
-  return convertPdfToImageFormat(item.path, target, Number(request.pdfDpi || 150), request.output);
+  if (kind === "pdf" && target === "md") {
+    return convertPdfToMarkdown(item.path, request.output);
+  }
+
+  return convertPdfToImageFormat(item.path, target, Number(request.pdfDpi || 150), request.output, itemOptions);
 }
 
 async function convertBatch(request, onProgress = () => {}) {

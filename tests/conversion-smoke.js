@@ -70,7 +70,10 @@ async function main() {
       {
         id: "jpeg-to-jpg",
         path: path.join(samples, "Generated Image February 23, 2026 - 7_37PM.jpeg"),
-        target: "jpg"
+        target: "jpg",
+        options: {
+          quality: 80
+        }
       },
       {
         id: "png-to-pdf",
@@ -86,6 +89,11 @@ async function main() {
         id: "pdf-to-png",
         path: path.join(samples, "Reflection Paper 3_Answer Sheet Template.pdf"),
         target: "png"
+      },
+      {
+        id: "pdf-to-md",
+        path: path.join(samples, "Reflection Paper 3_Answer Sheet Template.pdf"),
+        target: "md"
       }
     ],
     output: {
@@ -229,17 +237,27 @@ async function main() {
       {
         id: "video-to-webm",
         path: videoPath,
-        target: "webm"
+        target: "webm",
+        options: {
+          videoResolution: "720"
+        }
       },
       {
         id: "video-to-gif",
         path: videoPath,
-        target: "gif"
+        target: "gif",
+        options: {
+          gifFps: 10,
+          gifResolution: "360"
+        }
       },
       {
         id: "video-to-audio",
         path: videoPath,
-        target: "mp3"
+        target: "mp3",
+        options: {
+          audioNormalize: true
+        }
       }
     ],
     output: {

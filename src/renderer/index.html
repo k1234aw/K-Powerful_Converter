@@ -164,16 +164,16 @@
         <div class="settings-header">
           <div>
             <h2 id="settingsTitle">Settings</h2>
-            <p>Choose local conversion engines and file naming.</p>
+            <p>Choose conversion settings and file naming.</p>
           </div>
           <button id="closeSettingsButton" class="icon-button" type="button" aria-label="Close settings">x</button>
         </div>
         <div class="setting-row">
-          <label class="control-label" for="documentPdfEngine">Office to PDF</label>
+          <label class="control-label" for="documentPdfEngine">Office documents</label>
           <select id="documentPdfEngine">
             <option value="office">Microsoft Office</option>
-            <option value="libreoffice">Local LibreOffice / soffice</option>
-            <option value="auto">Auto local fallback</option>
+            <option value="libreoffice">LibreOffice</option>
+            <option value="auto">Auto fallback</option>
           </select>
         </div>
         <div class="setting-row">
@@ -209,10 +209,12 @@
           </div>
         </div>
         <p class="settings-note">
-          Microsoft Office uses Word, PowerPoint, or Excel if they are installed. LibreOffice uses a local soffice install and never uploads files.
+          Microsoft Office uses local Word, PowerPoint, or Excel automation. LibreOffice can also be used when installed separately.
         </p>
       </section>
     </div>
+
+    <div id="formatSettingsPanel" class="settings-backdrop" aria-hidden="true" hidden></div>
 
     <div id="toastHost" class="toast-host" aria-live="polite" aria-atomic="true"></div>
 

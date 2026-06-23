@@ -3,6 +3,7 @@ const clearButton = document.querySelector("#clearButton");
 const settingsButton = document.querySelector("#settingsButton");
 const closeSettingsButton = document.querySelector("#closeSettingsButton");
 const settingsPanel = document.querySelector("#settingsPanel");
+const formatSettingsPanel = document.querySelector("#formatSettingsPanel");
 const documentPdfEngine = document.querySelector("#documentPdfEngine");
 const mediaEncodingMode = document.querySelector("#mediaEncodingMode");
 const fileNameUsePrefix = document.querySelector("#fileNameUsePrefix");
@@ -54,6 +55,9 @@ let nextId = 1;
 let draggedImageId = null;
 let activeBulkFileTarget = "png";
 let activeFormatPicker = null;
+let activeFormatSettingsId = null;
+let activeFormatSettingsMode = "row";
+let formatSettingDefaults = {};
 let toastTimer = null;
 const settingsStorageKey = "powerfulConverter.settings";
 
@@ -140,6 +144,7 @@ const outputFormats = [
 const outputFormatLabels = new Map(outputFormats.map((format) => [format.value, format.label]));
 const documentFormats = [
   { value: "pdf", label: "PDF", keywords: "pdf document" },
+  { value: "md", label: "MD", keywords: "md markdown text document" },
   { value: "doc", label: "DOC", keywords: "doc word document" },
   { value: "docx", label: "DOCX", keywords: "docx word document" },
   { value: "rtf", label: "RTF", keywords: "rtf rich text document" },
@@ -188,6 +193,9 @@ const formatGroups = [
   { value: "video", label: "Video" },
   { value: "audio", label: "Audio" }
 ];
+const configurableImageTargets = new Set(["jpg", "webp"]);
+const configurableVideoTargets = new Set(videoFormats.map((format) => format.value).filter((value) => value !== "gif"));
+const configurableAudioTargets = new Set(audioFormats.map((format) => format.value));
 
 function extensionOf(filePath) {
   const match = filePath.toLowerCase().match(/\.[^.\\\/]+$/);
@@ -232,12 +240,12 @@ function selectedRadio(name) {
   return checked ? checked.value : null;
 }
 
-function selectedDocumentPdfEngine() {
-  return documentPdfEngine?.value || "office";
-}
-
 function selectedMediaEncodingMode() {
   return mediaEncodingMode?.value || "auto";
+}
+
+function selectedDocumentPdfEngine() {
+  return documentPdfEngine?.value || "office";
 }
 
 function selectedFileNameFormat() {
@@ -248,6 +256,74 @@ function selectedFileNameFormat() {
     useSuffix: Boolean(fileNameUseSuffix?.checked),
     suffix: fileNameSuffix?.value || "",
     useConvertedText: Boolean(fileNameUseConverted?.checked)
+  };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+
+  if (Number.isNaN(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
+function isFormatConfigurable(file) {
+  if (!file || file.kind === "unsupported") {
+    return false;
+  }
+
+  if (configurableImageTargets.has(file.target)) {
+    return true;
+  }
+
+  if (file.kind === "video" && (configurableVideoTargets.has(file.target) || file.target === "gif" || configurableAudioTargets.has(file.target))) {
+    return true;
+  }
+
+  if (file.kind === "audio" && configurableAudioTargets.has(file.target)) {
+    return true;
+  }
+
+  return false;
+}
+
+function defaultOutputSettings(file) {
+  const defaults = { ...(formatSettingDefaults[file?.target] || {}) };
+
+  if (configurableImageTargets.has(file?.target)) {
+    return {
+      quality: clampNumber(defaults.quality, 1, 100, 92)
+    };
+  }
+
+  if (file?.kind === "video" && file.target === "gif") {
+    return {
+      gifFps: clampNumber(defaults.gifFps, 1, 30, 15),
+      gifResolution: ["original", "720", "640", "480", "360"].includes(defaults.gifResolution) ? defaults.gifResolution : "640"
+    };
+  }
+
+  if (file?.kind === "video" && configurableVideoTargets.has(file.target)) {
+    return {
+      videoResolution: ["original", "1440", "1080", "720"].includes(defaults.videoResolution) ? defaults.videoResolution : "original"
+    };
+  }
+
+  if (configurableAudioTargets.has(file?.target)) {
+    return {
+      audioNormalize: Boolean(defaults.audioNormalize)
+    };
+  }
+
+  return {};
+}
+
+function normalizedOutputSettings(file, settings = file?.outputSettings) {
+  return {
+    ...defaultOutputSettings(file),
+    ...(settings || {})
   };
 }
 
@@ -292,11 +368,7 @@ function loadSettings() {
     raw = window.localStorage?.getItem(settingsStorageKey);
     saved = raw ? JSON.parse(raw) : null;
   } catch {
-    saved = raw ? { documentPdfEngine: raw } : null;
-  }
-
-  if (typeof saved === "string") {
-    saved = { documentPdfEngine: saved };
+    saved = null;
   }
 
   if (documentPdfEngine && ["office", "libreoffice", "auto"].includes(saved?.documentPdfEngine)) {
@@ -306,6 +378,10 @@ function loadSettings() {
   if (mediaEncodingMode && ["auto", "cpu"].includes(saved?.mediaEncodingMode)) {
     mediaEncodingMode.value = saved.mediaEncodingMode;
   }
+
+  formatSettingDefaults = saved?.outputFormatSettings && typeof saved.outputFormatSettings === "object"
+    ? saved.outputFormatSettings
+    : {};
 
   const fileNameFormat = saved?.fileNameFormat || {};
 
@@ -341,6 +417,7 @@ function saveSettings() {
     window.localStorage?.setItem(settingsStorageKey, JSON.stringify({
       documentPdfEngine: selectedDocumentPdfEngine(),
       mediaEncodingMode: selectedMediaEncodingMode(),
+      outputFormatSettings: formatSettingDefaults,
       fileNameFormat: selectedFileNameFormat()
     }));
   } catch {
@@ -381,7 +458,10 @@ function fileTargetOptions(file) {
   }
 
   if (file.kind === "pdf") {
-    return outputFormats;
+    return [
+      documentFormats.find((format) => format.value === "md"),
+      ...outputFormats
+    ];
   }
 
   if (file.kind === "document") {
@@ -533,30 +613,226 @@ function renderFormatPicker({ type, id = "bulk", value, formats, label }) {
 }
 
 function renderBulkFileTarget() {
-  bulkFileTarget.innerHTML = renderFormatPicker({
+  const pseudoFile = bulkSettingsFile();
+  const settingsButton = isFormatConfigurable(pseudoFile)
+    ? `
+      <button class="format-settings-button is-active" type="button" data-action="open-bulk-format-settings" aria-label="${escapeHtml(`${formatLabel(activeBulkFileTarget)} bulk settings`)}" title="${escapeHtml(settingSummary(pseudoFile))}">
+        <span aria-hidden="true">&#9881;</span>
+        <span>Settings</span>
+      </button>
+    `
+    : "";
+
+  bulkFileTarget.innerHTML = `
+    <div class="format-target-cell">
+      ${renderFormatPicker({
     type: "bulk",
     value: activeBulkFileTarget,
     formats: allFileOutputFormats,
     label: "Bulk output format"
+  })}
+      ${settingsButton}
+    </div>
+  `;
+}
+
+function settingSummary(file) {
+  const settings = normalizedOutputSettings(file);
+
+  if (configurableImageTargets.has(file.target)) {
+    return `Quality ${clampNumber(settings.quality, 1, 100, 92)}`;
+  }
+
+  if (file.kind === "video" && file.target === "gif") {
+    const resolution = settings.gifResolution === "original" ? "Original" : `${settings.gifResolution}p`;
+    return `${clampNumber(settings.gifFps, 1, 30, 15)} fps, ${resolution}`;
+  }
+
+  if (file.kind === "video" && configurableVideoTargets.has(file.target)) {
+    return settings.videoResolution === "original" ? "Original size" : `${settings.videoResolution}p max`;
+  }
+
+  if (configurableAudioTargets.has(file.target)) {
+    return settings.audioNormalize ? "Normalization on" : "Normalization off";
+  }
+
+  return "";
+}
+
+function bulkSettingsFile() {
+  const group = formatGroupFor(activeBulkFileTarget);
+  const kind = activeBulkFileTarget === "gif" ? "video" : group;
+  const file = {
+    id: "bulk",
+    kind,
+    target: activeBulkFileTarget,
+    name: `Bulk ${formatLabel(activeBulkFileTarget)} settings`
+  };
+
+  return {
+    ...file,
+    outputSettings: defaultOutputSettings(file)
+  };
+}
+
+function updateFileOutputSettings(id, outputSettings) {
+  fileQueue = fileQueue.map((file) => (
+    file.id === id ? { ...file, outputSettings: normalizedOutputSettings(file, outputSettings) } : file
+  ));
+}
+
+function updateFileTarget(id, target) {
+  fileQueue = fileQueue.map((file) => {
+    if (file.id !== id) {
+      return file;
+    }
+
+    const next = { ...file, target };
+    return { ...next, outputSettings: defaultOutputSettings(next) };
   });
+}
+
+function applySettingsToSameFormat(sourceFile) {
+  const sourceSettings = normalizedOutputSettings(sourceFile);
+
+  formatSettingDefaults = {
+    ...formatSettingDefaults,
+    [sourceFile.target]: sourceSettings
+  };
+  fileQueue = fileQueue.map((file) => (
+    file.kind !== "unsupported" && file.target === sourceFile.target && isFormatConfigurable(file)
+      ? { ...file, outputSettings: normalizedOutputSettings(file, sourceSettings) }
+      : file
+  ));
+  saveSettings();
+}
+
+function closeFormatSettings() {
+  activeFormatSettingsId = null;
+  activeFormatSettingsMode = "row";
+  formatSettingsPanel.hidden = true;
+  formatSettingsPanel.setAttribute("aria-hidden", "true");
+  formatSettingsPanel.innerHTML = "";
+}
+
+function renderFormatSettingsPanel() {
+  const file = activeFormatSettingsMode === "bulk"
+    ? bulkSettingsFile()
+    : fileQueue.find((item) => item.id === activeFormatSettingsId);
+
+  if (!file || !isFormatConfigurable(file)) {
+    closeFormatSettings();
+    return;
+  }
+
+  const settings = normalizedOutputSettings(file);
+  const title = `${formatLabel(file.target)} settings`;
+  let fields = "";
+
+  if (configurableImageTargets.has(file.target)) {
+    const quality = clampNumber(settings.quality, 1, 100, 92);
+    fields = `
+      <label class="format-setting-field">
+        <span class="control-label">Quality <span class="range-value">${quality}</span></span>
+        <input type="range" min="1" max="100" value="${quality}" data-setting="quality">
+      </label>
+    `;
+  } else if (file.kind === "video" && file.target === "gif") {
+    const fps = clampNumber(settings.gifFps, 1, 30, 15);
+    const resolution = ["original", "720", "640", "480", "360"].includes(settings.gifResolution) ? settings.gifResolution : "640";
+    fields = `
+      <label class="format-setting-field">
+        <span class="control-label">Target frame rate</span>
+        <input type="number" min="1" max="30" value="${fps}" data-setting="gifFps">
+      </label>
+      <label class="format-setting-field">
+        <span class="control-label">Resolution</span>
+        <select data-setting="gifResolution">
+          <option value="original" ${resolution === "original" ? "selected" : ""}>Original or smaller</option>
+          <option value="720" ${resolution === "720" ? "selected" : ""}>720p max</option>
+          <option value="640" ${resolution === "640" ? "selected" : ""}>640p max</option>
+          <option value="480" ${resolution === "480" ? "selected" : ""}>480p max</option>
+          <option value="360" ${resolution === "360" ? "selected" : ""}>360p max</option>
+        </select>
+      </label>
+    `;
+  } else if (file.kind === "video" && configurableVideoTargets.has(file.target)) {
+    const resolution = ["original", "1440", "1080", "720"].includes(settings.videoResolution) ? settings.videoResolution : "original";
+    fields = `
+      <label class="format-setting-field">
+        <span class="control-label">Resolution</span>
+        <select data-setting="videoResolution">
+          <option value="original" ${resolution === "original" ? "selected" : ""}>Original or smaller</option>
+          <option value="1440" ${resolution === "1440" ? "selected" : ""}>2K / 1440p max</option>
+          <option value="1080" ${resolution === "1080" ? "selected" : ""}>1080p max</option>
+          <option value="720" ${resolution === "720" ? "selected" : ""}>720p max</option>
+        </select>
+      </label>
+    `;
+  } else if (configurableAudioTargets.has(file.target)) {
+    fields = `
+      <label class="check-option">
+        <input type="checkbox" data-setting="audioNormalize" ${settings.audioNormalize ? "checked" : ""}>
+        Audio normalization
+      </label>
+    `;
+  }
+
+  formatSettingsPanel.classList.add("format-settings-backdrop");
+  formatSettingsPanel.hidden = false;
+  formatSettingsPanel.setAttribute("aria-hidden", "false");
+  formatSettingsPanel.innerHTML = `
+    <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="formatSettingsTitle">
+      <div class="settings-header">
+        <div>
+          <h2 id="formatSettingsTitle">${escapeHtml(title)}</h2>
+          <p>${escapeHtml(file.name)}</p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-format-settings" aria-label="Close format settings">x</button>
+      </div>
+      <div class="format-settings-form">${fields}</div>
+      <div class="settings-actions">
+        <button class="small-button" type="button" data-action="apply-same-format">Use this settings for all same output format</button>
+        <button class="primary-button" type="button" data-action="close-format-settings">Done</button>
+      </div>
+    </section>
+  `;
+}
+
+function openFormatSettings(id) {
+  activeFormatPicker = null;
+  activeFormatSettingsMode = "row";
+  activeFormatSettingsId = id;
+  renderFiles();
+  renderFormatSettingsPanel();
+}
+
+function openBulkFormatSettings() {
+  activeFormatPicker = null;
+  activeFormatSettingsMode = "bulk";
+  activeFormatSettingsId = "bulk";
+  renderFiles();
+  renderFormatSettingsPanel();
 }
 
 function makeFileItem(filePath) {
   const kind = detectKind(filePath);
-
-  return {
+  const target = defaultFileTarget(filePath);
+  const item = {
     id: nextId++,
     path: filePath,
     name: basename(filePath),
     folder: dirname(filePath),
     kind,
-    target: defaultFileTarget(filePath),
+    target,
     status: kind === "unsupported" ? "unsupported" : "ready",
     message: kind === "unsupported" ? "Unsupported" : "Ready",
     outputPaths: [],
     selected: false,
     thumbnail: kind === "image" ? fileUrl(filePath) : ""
   };
+
+  return { ...item, outputSettings: defaultOutputSettings(item) };
 }
 
 function makeImagePdfItem(filePath) {
@@ -757,7 +1033,8 @@ function applySelectedFileTarget(target) {
       return file;
     }
 
-    return { ...file, target };
+    const next = { ...file, target };
+    return { ...next, outputSettings: defaultOutputSettings(next) };
   });
   renderFiles();
 }
@@ -786,10 +1063,6 @@ function reorderImagePdf(draggedId, targetId) {
   renderImagePdf();
 }
 
-function updateFileTarget(id, target) {
-  fileQueue = fileQueue.map((file) => (file.id === id ? { ...file, target } : file));
-}
-
 function renderFiles() {
   updatePageScrollSpace();
   convertFilesButton.disabled = fileQueue.length === 0 || fileQueue.every((file) => file.kind === "unsupported");
@@ -804,7 +1077,7 @@ function renderFiles() {
   fileTableBody.innerHTML = fileQueue.map((file) => {
     const statusClass = `status ${file.status}`;
     const outputTitle = file.outputPaths.length > 0 ? ` title="${escapeHtml(file.outputPaths.join("\n"))}"` : "";
-    const targetControl = file.kind === "unsupported"
+    const pickerControl = file.kind === "unsupported"
       ? '<span class="status unsupported">Not available</span>'
       : renderFormatPicker({
         type: "row",
@@ -813,6 +1086,19 @@ function renderFiles() {
         formats: fileTargetOptions(file),
         label: `Output format for ${file.name}`
       });
+    const targetControl = file.kind === "unsupported"
+      ? pickerControl
+      : `
+        <div class="format-target-cell">
+          ${pickerControl}
+          ${isFormatConfigurable(file) ? `
+            <button class="format-settings-button ${file.outputSettings ? "is-active" : ""}" type="button" data-action="open-format-settings" data-id="${file.id}" aria-label="${escapeHtml(`${formatLabel(file.target)} settings for ${file.name}`)}" title="${escapeHtml(settingSummary(file))}">
+              <span aria-hidden="true">&#9881;</span>
+              <span>Settings</span>
+            </button>
+          ` : ""}
+        </div>
+      `;
     const preview = file.thumbnail
       ? `<img class="file-preview" src="${escapeHtml(file.thumbnail)}" alt="">`
       : `<div class="file-preview placeholder">${escapeHtml(file.kind === "pdf" ? "PDF" : "FILE")}</div>`;
@@ -1010,12 +1296,17 @@ settingsPanel.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !formatSettingsPanel.hidden) {
+    closeFormatSettings();
+    return;
+  }
+
   if (event.key === "Escape" && !settingsPanel.hidden) {
     closeSettings();
   }
 });
 
-documentPdfEngine.addEventListener("change", saveSettings);
+documentPdfEngine?.addEventListener("change", saveSettings);
 mediaEncodingMode?.addEventListener("change", saveSettings);
 
 [
@@ -1044,6 +1335,77 @@ applyFileTargetButton.addEventListener("click", () => applySelectedFileTarget(ac
 applyImageTargetButton.addEventListener("click", applySelectedImageTarget);
 removeSelectedFilesButton.addEventListener("click", removeSelectedFiles);
 removeSelectedImagesButton.addEventListener("click", removeSelectedImages);
+
+formatSettingsPanel.addEventListener("click", (event) => {
+  if (event.target === formatSettingsPanel) {
+    closeFormatSettings();
+    return;
+  }
+
+  const button = event.target.closest("button[data-action]");
+  if (!button) {
+    return;
+  }
+
+  if (button.dataset.action === "close-format-settings") {
+    closeFormatSettings();
+    renderFiles();
+    return;
+  }
+
+  if (button.dataset.action === "apply-same-format") {
+    const file = activeFormatSettingsMode === "bulk"
+      ? bulkSettingsFile()
+      : fileQueue.find((item) => item.id === activeFormatSettingsId);
+    if (file) {
+      applySettingsToSameFormat(file);
+      renderFiles();
+      renderFormatSettingsPanel();
+    }
+  }
+});
+
+function handleFormatSettingsInput(event) {
+  const target = event.target;
+  const setting = target.dataset.setting;
+  const file = activeFormatSettingsMode === "bulk"
+    ? bulkSettingsFile()
+    : fileQueue.find((item) => item.id === activeFormatSettingsId);
+
+  if (!setting || !file) {
+    return;
+  }
+
+  const settings = normalizedOutputSettings(file);
+
+  if (setting === "quality") {
+    settings.quality = clampNumber(target.value, 1, 100, 92);
+  } else if (setting === "gifFps") {
+    settings.gifFps = clampNumber(target.value, 1, 30, 15);
+  } else if (setting === "audioNormalize") {
+    settings.audioNormalize = Boolean(target.checked);
+  } else if (setting === "gifResolution") {
+    settings.gifResolution = ["original", "720", "640", "480", "360"].includes(target.value) ? target.value : "640";
+  } else if (setting === "videoResolution") {
+    settings.videoResolution = ["original", "1440", "1080", "720"].includes(target.value) ? target.value : "original";
+  }
+
+  if (activeFormatSettingsMode === "bulk") {
+    formatSettingDefaults = {
+      ...formatSettingDefaults,
+      [file.target]: settings
+    };
+    saveSettings();
+  } else {
+    updateFileOutputSettings(file.id, settings);
+  }
+
+  renderFormatSettingsPanel();
+  renderFiles();
+}
+
+formatSettingsPanel.addEventListener("input", handleFormatSettingsInput);
+formatSettingsPanel.addEventListener("change", handleFormatSettingsInput);
 
 function handleFormatPickerClick(event) {
   const button = event.target.closest("button[data-action]");
@@ -1080,6 +1442,7 @@ function handleFormatPickerClick(event) {
     event.stopPropagation();
     if (button.dataset.pickerType === "bulk") {
       activeBulkFileTarget = button.dataset.value;
+      closeFormatSettings();
     } else {
       updateFileTarget(Number(button.dataset.id), button.dataset.value);
     }
@@ -1118,6 +1481,13 @@ function handleFormatPickerSearch(event) {
 
 bulkFileTarget.addEventListener("click", handleFormatPickerClick);
 bulkFileTarget.addEventListener("input", handleFormatPickerSearch);
+bulkFileTarget.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-action]");
+
+  if (button?.dataset.action === "open-bulk-format-settings") {
+    openBulkFormatSettings();
+  }
+});
 
 document.addEventListener("click", (event) => {
   if (activeFormatPicker && !event.target.closest(".format-picker-control")) {
@@ -1159,6 +1529,11 @@ fileTableBody.addEventListener("click", (event) => {
   }
 
   const button = event.target.closest("button[data-action]");
+
+  if (button?.dataset.action === "open-format-settings") {
+    openFormatSettings(Number(button.dataset.id));
+    return;
+  }
 
   if (button?.dataset.action === "remove") {
     removeFileQueueItem(Number(button.dataset.id));
@@ -1247,7 +1622,7 @@ convertFilesButton.addEventListener("click", async () => {
   const request = {
     files: fileQueue
       .filter((file) => file.kind !== "unsupported")
-      .map((file) => ({ id: file.id, path: file.path, target: file.target })),
+      .map((file) => ({ id: file.id, path: file.path, target: file.target, options: normalizedOutputSettings(file) })),
     output,
     imageToPdfMode: "individual",
     documentPdfEngine: selectedDocumentPdfEngine(),

@@ -45,6 +45,7 @@
     ],
     "win": {
       "icon": "src/renderer/assets/logo.ico",
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "portable",

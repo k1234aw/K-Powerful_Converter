@@ -358,7 +358,7 @@ td:nth-child(3) {
 
 th:nth-child(4),
 td:nth-child(4) {
-  width: 210px;
+  width: 300px;
 }
 
 th:nth-child(6),
@@ -403,6 +403,10 @@ tbody tr:last-child td {
 
 .settings-backdrop[hidden] {
   display: none;
+}
+
+.format-settings-backdrop {
+  z-index: 70;
 }
 
 .settings-modal {
@@ -464,6 +468,66 @@ tbody tr:last-child td {
 .setting-block h3 {
   margin: 0;
   font-size: 16px;
+}
+
+.format-target-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.format-target-cell .format-picker-control {
+  width: 180px;
+}
+
+.format-settings-button {
+  display: inline-flex;
+  min-width: 96px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--brand);
+  border-radius: 7px;
+  background: #eef7f9;
+  color: var(--brand-dark);
+  padding: 0 10px;
+  font-weight: 650;
+}
+
+.format-settings-button.is-active {
+  border-color: var(--brand);
+  background: #eef7f9;
+}
+
+.format-settings-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.format-setting-field {
+  display: grid;
+  gap: 8px;
+}
+
+.format-setting-field select,
+.format-setting-field input[type="number"],
+.format-setting-field input[type="range"] {
+  width: 100%;
+}
+
+.range-value {
+  color: var(--brand-dark);
+  font-weight: 700;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .text-input {
