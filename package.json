@@ -1,6 +1,6 @@
 {
   "name": "powerful-converter",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Portable Windows file converter for images and PDFs.",
   "author": "Local",
   "main": "src/main/main.js",

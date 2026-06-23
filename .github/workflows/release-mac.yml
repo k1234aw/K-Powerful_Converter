@@ -1,6 +1,12 @@
 name: Build macOS release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to upload the macOS build to"
+        required: true
+        default: "v0.1.5"
   push:
     tags:
       - "v*"
@@ -33,4 +39,5 @@ jobs:
       - name: Upload macOS release asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
           files: dist/*mac*.zip

@@ -1680,13 +1680,191 @@ function normalizePdfPageTextForMarkdown(pageText) {
     .trim();
 }
 
+const LATEX_SYMBOL_REPLACEMENTS = new Map([
+  ["≤", "\\le"],
+  ["≥", "\\ge"],
+  ["≠", "\\ne"],
+  ["≈", "\\approx"],
+  ["≡", "\\equiv"],
+  ["±", "\\pm"],
+  ["∓", "\\mp"],
+  ["×", "\\times"],
+  ["÷", "\\div"],
+  ["∞", "\\infty"],
+  ["∂", "\\partial"],
+  ["∇", "\\nabla"],
+  ["∑", "\\sum"],
+  ["∏", "\\prod"],
+  ["∫", "\\int"],
+  ["√", "\\sqrt"],
+  ["∈", "\\in"],
+  ["∉", "\\notin"],
+  ["⊂", "\\subset"],
+  ["⊆", "\\subseteq"],
+  ["∪", "\\cup"],
+  ["∩", "\\cap"],
+  ["→", "\\to"],
+  ["←", "\\leftarrow"],
+  ["↔", "\\leftrightarrow"],
+  ["⇒", "\\Rightarrow"],
+  ["α", "\\alpha"],
+  ["β", "\\beta"],
+  ["γ", "\\gamma"],
+  ["δ", "\\delta"],
+  ["ε", "\\epsilon"],
+  ["θ", "\\theta"],
+  ["λ", "\\lambda"],
+  ["μ", "\\mu"],
+  ["π", "\\pi"],
+  ["ρ", "\\rho"],
+  ["σ", "\\sigma"],
+  ["τ", "\\tau"],
+  ["φ", "\\phi"],
+  ["ω", "\\omega"],
+  ["Δ", "\\Delta"],
+  ["Ω", "\\Omega"]
+]);
+
+const SUPERSCRIPT_DIGITS = new Map([
+  ["⁰", "0"],
+  ["¹", "1"],
+  ["²", "2"],
+  ["³", "3"],
+  ["⁴", "4"],
+  ["⁵", "5"],
+  ["⁶", "6"],
+  ["⁷", "7"],
+  ["⁸", "8"],
+  ["⁹", "9"]
+]);
+
+const SUBSCRIPT_DIGITS = new Map([
+  ["₀", "0"],
+  ["₁", "1"],
+  ["₂", "2"],
+  ["₃", "3"],
+  ["₄", "4"],
+  ["₅", "5"],
+  ["₆", "6"],
+  ["₇", "7"],
+  ["₈", "8"],
+  ["₉", "9"]
+]);
+
+function replaceScriptDigits(value, digitMap, wrapper) {
+  const chars = [...value];
+  let output = "";
+
+  for (let index = 0; index < chars.length; index += 1) {
+    const digit = digitMap.get(chars[index]);
+    if (!digit) {
+      output += chars[index];
+      continue;
+    }
+
+    let digits = digit;
+    while (index + 1 < chars.length && digitMap.has(chars[index + 1])) {
+      index += 1;
+      digits += digitMap.get(chars[index]);
+    }
+
+    output += wrapper(digits);
+  }
+
+  return output;
+}
+
+function replaceLatexSymbols(line) {
+  let converted = line;
+
+  for (const [symbol, latex] of LATEX_SYMBOL_REPLACEMENTS.entries()) {
+    converted = converted.split(symbol).join(` ${latex} `);
+  }
+
+  return converted
+    .replace(/\\sqrt\s*\(([^()]+)\)/gi, (_match, value) => `\\sqrt{${value}}`)
+    .replace(/\\sqrt\s+([A-Za-z0-9]+)\b/gi, (_match, value) => `\\sqrt{${value}}`)
+    .replace(/(^|[^\\])\bsqrt\s*\(([^()]+)\)/gi, "$1\\sqrt{$2}")
+    .replace(/(^|[^\\])\bsqrt\s+([A-Za-z0-9]+)\b/gi, "$1\\sqrt{$2}")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatOcrMathAsLatex(line) {
+  let converted = String(line || "").trim();
+
+  converted = replaceScriptDigits(converted, SUPERSCRIPT_DIGITS, (digits) => `^{${digits}}`);
+  converted = replaceScriptDigits(converted, SUBSCRIPT_DIGITS, (digits) => `_{${digits}}`);
+  converted = replaceLatexSymbols(converted);
+
+  converted = converted
+    .replace(/([A-Za-z0-9)}])\s*\^\s*([A-Za-z0-9]+)/g, "$1^{$2}")
+    .replace(/([A-Za-z0-9)}])\s*_\s*([A-Za-z0-9]+)/g, "$1_{$2}")
+    .replace(/\s*([=+\-*/<>])\s*/g, " $1 ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return converted;
+}
+
+function isLikelyOcrMathLine(line) {
+  const trimmed = String(line || "").trim();
+  if (trimmed.length < 3 || trimmed.length > 180) {
+    return false;
+  }
+
+  if (/^(page|chapter|section)\b/i.test(trimmed)) {
+    return false;
+  }
+
+  const mathSymbols = (trimmed.match(/[=+\-*/^_<>≤≥≠≈±×÷√∑∫πθλμσΩΔ∞]/g) || []).length;
+  const digits = (trimmed.match(/\d/g) || []).length;
+  const words = (trimmed.match(/[A-Za-z]{3,}/g) || []).length;
+  const shortTokens = (trimmed.match(/\b[A-Za-z]\b/g) || []).length;
+
+  if (/^\(?\d+\)?[.)]\s+[A-Za-z]/.test(trimmed) && mathSymbols < 2) {
+    return false;
+  }
+
+  if (/[=≤≥≠≈]/.test(trimmed) && (mathSymbols >= 1 || digits > 0 || shortTokens > 0) && words <= 8) {
+    return true;
+  }
+
+  if (/[√∑∫πθλμσΩΔ∞]/.test(trimmed) && words <= 8) {
+    return true;
+  }
+
+  return mathSymbols >= 3 && words <= 5;
+}
+
+function normalizeOcrTextForMarkdown(pageText) {
+  const normalized = normalizePdfPageTextForMarkdown(pageText);
+
+  return normalized
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!isLikelyOcrMathLine(trimmed)) {
+        return line;
+      }
+
+      return `$$\n${formatOcrMathAsLatex(trimmed)}\n$$`;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function pdfTextToMarkdown(text, filePath, options = {}) {
   const title = markdownHeadingText(baseNameWithoutExtension(filePath));
   const includePageHeadings = options.includePageHeadings !== false;
+  const normalizePage = options.normalizePages === false
+    ? (pageText) => String(pageText || "").trim()
+    : normalizePdfPageTextForMarkdown;
   const pages = String(text || "")
     .replace(/\u0000/g, "")
     .split("\f")
-    .map(normalizePdfPageTextForMarkdown)
+    .map(normalizePage)
     .filter(Boolean);
 
   if (pages.length === 0) {
@@ -2007,10 +2185,10 @@ async function convertPdfToMarkdown(filePath, output, onProgress = () => {}) {
 function ocrResultsToMarkdown(results, filePath) {
   const ordered = [...results]
     .sort((a, b) => Number(a.page || 0) - Number(b.page || 0))
-    .map((item) => normalizePdfPageTextForMarkdown(item.text))
+    .map((item) => normalizeOcrTextForMarkdown(item.text))
     .filter(Boolean);
 
-  return pdfTextToMarkdown(ordered.join("\f"), filePath);
+  return pdfTextToMarkdown(ordered.join("\f"), filePath, { normalizePages: false });
 }
 
 async function convertPdfToOcrMarkdownWithPageRecognizer(filePath, output, onProgress, recognizer) {
