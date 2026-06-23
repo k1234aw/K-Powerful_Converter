@@ -1767,7 +1767,222 @@ $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath '${escapePowerShel
 `;
 }
 
+function macOcrJavaScript() {
+  return `
+ObjC.import('Foundation');
+ObjC.import('CoreImage');
+ObjC.import('Vision');
+ObjC.import('PDFKit');
+ObjC.import('AppKit');
+
+function unwrap(value) {
+  return ObjC.unwrap(value);
+}
+
+function readJson(filePath) {
+  const content = $.NSString.stringWithContentsOfFileEncodingError(filePath, $.NSUTF8StringEncoding, null);
+  if (!content) {
+    throw new Error('Could not read OCR input JSON.');
+  }
+
+  return JSON.parse(unwrap(content));
+}
+
+function writeJson(filePath, value) {
+  const content = $(JSON.stringify(value));
+  const ok = content.writeToFileAtomicallyEncodingError(filePath, true, $.NSUTF8StringEncoding, null);
+  if (!ok) {
+    throw new Error('Could not write OCR output JSON.');
+  }
+}
+
+function recognizeImage(pagePath) {
+  const url = $.NSURL.fileURLWithPath(pagePath);
+  const image = $.CIImage.imageWithContentsOfURL(url);
+  if (!image) {
+    throw new Error('Could not read page image: ' + pagePath);
+  }
+
+  const request = $.VNRecognizeTextRequest.alloc.init;
+  request.recognitionLevel = 0;
+  request.usesLanguageCorrection = true;
+
+  const handler = $.VNImageRequestHandler.alloc.initWithCIImage_options(image, $.NSDictionary.dictionary);
+  const requests = $.NSArray.arrayWithObject(request);
+  const ok = handler.performRequests_error(requests, null);
+  if (!ok) {
+    throw new Error('Apple Vision OCR failed for page image: ' + pagePath);
+  }
+
+  const observations = request.results;
+  const lines = [];
+  const count = observations ? observations.count : 0;
+
+  for (let index = 0; index < count; index += 1) {
+    const observation = observations.objectAtIndex(index);
+    const candidates = observation.topCandidates_(1);
+    if (candidates && candidates.count > 0) {
+      const candidate = candidates.objectAtIndex(0);
+      const text = unwrap(candidate.string);
+      if (text) {
+        lines.push(text);
+      }
+    }
+  }
+
+  return lines.join('\\n');
+}
+
+function recognizePdfPage(page) {
+  const bounds = page.boundsForBox(0);
+  const scale = 2;
+  const width = Math.max(1, Math.min(4000, Math.round(bounds.size.width * scale)));
+  const height = Math.max(1, Math.min(4000, Math.round(bounds.size.height * scale)));
+  const image = page.thumbnailOfSize_forBox($.NSMakeSize(width, height), 0);
+  if (!image) {
+    throw new Error('Could not render PDF page for OCR.');
+  }
+
+  const data = image.TIFFRepresentation;
+  if (!data) {
+    throw new Error('Could not read rendered PDF page data for OCR.');
+  }
+
+  const request = $.VNRecognizeTextRequest.alloc.init;
+  request.recognitionLevel = 0;
+  request.usesLanguageCorrection = true;
+
+  const handler = $.VNImageRequestHandler.alloc.initWithData_options(data, $.NSDictionary.dictionary);
+  const requests = $.NSArray.arrayWithObject(request);
+  const ok = handler.performRequests_error(requests, null);
+  if (!ok) {
+    throw new Error('Apple Vision OCR failed for rendered PDF page.');
+  }
+
+  const observations = request.results;
+  const lines = [];
+  const count = observations ? observations.count : 0;
+
+  for (let index = 0; index < count; index += 1) {
+    const observation = observations.objectAtIndex(index);
+    const candidates = observation.topCandidates_(1);
+    if (candidates && candidates.count > 0) {
+      const candidate = candidates.objectAtIndex(0);
+      const text = unwrap(candidate.string);
+      if (text) {
+        lines.push(text);
+      }
+    }
+  }
+
+  return lines.join('\\n');
+}
+
+function runImages(argv) {
+  const inputJsonPath = argv[0];
+  const outputJsonPath = argv[1];
+  const payload = readJson(inputJsonPath);
+  const results = [];
+
+  payload.pages.forEach((item) => {
+    try {
+      results.push({
+        page: item.page,
+        text: recognizeImage(item.path)
+      });
+    } catch (error) {
+      throw new Error('OCR failed on page ' + item.page + ': ' + error.message);
+    }
+  });
+
+  writeJson(outputJsonPath, results);
+}
+
+function runPdf(argv) {
+  const pdfPath = argv[0];
+  const outputJsonPath = argv[1];
+  const url = $.NSURL.fileURLWithPath(pdfPath);
+  const document = $.PDFDocument.alloc.initWithURL(url);
+  if (!document) {
+    throw new Error('Could not open PDF for Apple Vision OCR.');
+  }
+
+  const results = [];
+  const pageCount = document.pageCount;
+
+  for (let index = 0; index < pageCount; index += 1) {
+    const page = document.pageAtIndex(index);
+    try {
+      results.push({
+        page: index + 1,
+        text: recognizePdfPage(page)
+      });
+    } catch (error) {
+      throw new Error('OCR failed on page ' + (index + 1) + ': ' + error.message);
+    }
+  }
+
+  writeJson(outputJsonPath, results);
+}
+
+function run(argv) {
+  const firstArg = argv[0] || '';
+  if (/\\.pdf$/i.test(firstArg)) {
+    return runPdf(argv);
+  }
+
+  return runImages(argv);
+}
+`;
+}
+
+function macPdfTextJavaScript() {
+  return `
+ObjC.import('Foundation');
+ObjC.import('PDFKit');
+
+function unwrap(value) {
+  return ObjC.unwrap(value);
+}
+
+function run(argv) {
+  const pdfPath = argv[0];
+  const outputPath = argv[1];
+  const url = $.NSURL.fileURLWithPath(pdfPath);
+  const document = $.PDFDocument.alloc.initWithURL(url);
+  if (!document) {
+    throw new Error('Could not open PDF for text extraction.');
+  }
+
+  const text = document.string ? unwrap(document.string) : '';
+  const content = $(text || '');
+  const ok = content.writeToFileAtomicallyEncodingError(outputPath, true, $.NSUTF8StringEncoding, null);
+  if (!ok) {
+    throw new Error('Could not write Markdown output.');
+  }
+}
+`;
+}
+
 async function writePdfEmbeddedText(filePath, outputPath) {
+  if (process.platform === "darwin") {
+    const tempScriptPath = await uniquePath(path.join(path.dirname(outputPath), `${baseNameWithoutExtension(outputPath)}_pdfkit_text.js`));
+
+    await fs.writeFile(tempScriptPath, macPdfTextJavaScript(), "utf8");
+
+    try {
+      await execFileAsync(
+        "/usr/bin/osascript",
+        ["-l", "JavaScript", tempScriptPath, filePath, outputPath],
+        { timeout: 180000, maxBuffer: 1024 * 1024 }
+      );
+    } finally {
+      await fs.unlink(tempScriptPath).catch(() => {});
+    }
+
+    return;
+  }
+
   await execFileAsync(
     popplerToolPath("pdftotext"),
     ["-q", "-enc", "UTF-8", "-eol", "unix", "-nopgbrk", filePath, outputPath],
@@ -1798,18 +2013,13 @@ function ocrResultsToMarkdown(results, filePath) {
   return pdfTextToMarkdown(ordered.join("\f"), filePath);
 }
 
-async function convertPdfToOcrMarkdown(filePath, output, onProgress = () => {}) {
-  if (process.platform !== "win32") {
-    throw new Error("PDF OCR to Markdown uses Windows OCR and is only available on Windows.");
-  }
-
+async function convertPdfToOcrMarkdownWithPageRecognizer(filePath, output, onProgress, recognizer) {
   const outputDir = outputDirectoryFor(filePath, output);
   const outputPath = await uniquePath(path.join(outputDir, `${outputBaseNameFor(filePath, output)}.md`));
   const tempDir = await fs.mkdtemp(path.join(outputDir, ".powerful-converter-ocr-"));
   const tempPrefix = `ocr_page_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
   const inputJsonPath = path.join(tempDir, "ocr-input.json");
   const outputJsonPath = path.join(tempDir, "ocr-output.json");
-  const tempScriptPath = path.join(tempDir, "windows-ocr.ps1");
   let pagePaths = [];
 
   try {
@@ -1821,14 +2031,13 @@ async function convertPdfToOcrMarkdown(filePath, output, onProgress = () => {}) 
     }));
 
     await fs.writeFile(inputJsonPath, JSON.stringify({ pages: inputItems }), "utf8");
-    await fs.writeFile(tempScriptPath, windowsOcrPowerShellScript(inputJsonPath, outputJsonPath), "utf8");
-
-    onProgress({ status: "running", message: `Running Windows OCR on ${pagePaths.length} page${pagePaths.length === 1 ? "" : "s"}...` });
-    await execFileAsync(
-      "powershell.exe",
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tempScriptPath],
-      { windowsHide: true, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }
-    );
+    await recognizer({
+      pageCount: pagePaths.length,
+      inputJsonPath,
+      outputJsonPath,
+      tempDir,
+      onProgress
+    });
 
     const rawResults = (await fs.readFile(outputJsonPath, "utf8")).replace(/^\uFEFF/, "");
     const parsed = JSON.parse(rawResults);
@@ -1844,11 +2053,89 @@ async function convertPdfToOcrMarkdown(filePath, output, onProgress = () => {}) 
 
     await fs.unlink(inputJsonPath).catch(() => {});
     await fs.unlink(outputJsonPath).catch(() => {});
+    await fs.rmdir(tempDir).catch(() => {});
+  }
+
+  return [outputPath];
+}
+
+async function runWindowsOcr({ pageCount, inputJsonPath, outputJsonPath, tempDir, onProgress }) {
+  const tempScriptPath = path.join(tempDir, "windows-ocr.ps1");
+
+  await fs.writeFile(tempScriptPath, windowsOcrPowerShellScript(inputJsonPath, outputJsonPath), "utf8");
+
+  try {
+    onProgress({ status: "running", message: `Running Windows OCR on ${pageCount} page${pageCount === 1 ? "" : "s"}...` });
+    await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tempScriptPath],
+      { windowsHide: true, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }
+    );
+  } finally {
+    await fs.unlink(tempScriptPath).catch(() => {});
+  }
+}
+
+async function runMacOcr({ pageCount, inputJsonPath, outputJsonPath, tempDir, onProgress }) {
+  const tempScriptPath = path.join(tempDir, "macos-vision-ocr.js");
+
+  await fs.writeFile(tempScriptPath, macOcrJavaScript(), "utf8");
+
+  try {
+    onProgress({ status: "running", message: `Running Apple Vision OCR on ${pageCount} page${pageCount === 1 ? "" : "s"}...` });
+    await execFileAsync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", tempScriptPath, inputJsonPath, outputJsonPath],
+      { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }
+    );
+  } finally {
+    await fs.unlink(tempScriptPath).catch(() => {});
+  }
+}
+
+async function convertPdfToMacOcrMarkdown(filePath, output, onProgress = () => {}) {
+  const outputDir = outputDirectoryFor(filePath, output);
+  const outputPath = await uniquePath(path.join(outputDir, `${outputBaseNameFor(filePath, output)}.md`));
+  const tempDir = await fs.mkdtemp(path.join(outputDir, ".powerful-converter-ocr-"));
+  const outputJsonPath = path.join(tempDir, "ocr-output.json");
+  const tempScriptPath = path.join(tempDir, "macos-vision-ocr.js");
+
+  try {
+    await fs.writeFile(tempScriptPath, macOcrJavaScript(), "utf8");
+
+    onProgress({ status: "running", message: "Running Apple Vision OCR on PDF..." });
+    await execFileAsync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", tempScriptPath, filePath, outputJsonPath],
+      { timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 }
+    );
+
+    const rawResults = (await fs.readFile(outputJsonPath, "utf8")).replace(/^\uFEFF/, "");
+    const parsed = JSON.parse(rawResults);
+    const results = Array.isArray(parsed) ? parsed : [parsed];
+
+    await fs.writeFile(outputPath, ocrResultsToMarkdown(results, filePath), "utf8");
+  } catch (error) {
+    throw new Error(`PDF OCR to Markdown conversion failed. ${error.stderr || error.message}`);
+  } finally {
+    await fs.unlink(outputJsonPath).catch(() => {});
     await fs.unlink(tempScriptPath).catch(() => {});
     await fs.rmdir(tempDir).catch(() => {});
   }
 
   return [outputPath];
+}
+
+async function convertPdfToOcrMarkdown(filePath, output, onProgress = () => {}) {
+  if (process.platform === "win32") {
+    return convertPdfToOcrMarkdownWithPageRecognizer(filePath, output, onProgress, runWindowsOcr);
+  }
+
+  if (process.platform === "darwin") {
+    return convertPdfToMacOcrMarkdown(filePath, output, onProgress);
+  }
+
+  throw new Error("PDF OCR to Markdown is available on Windows OCR and macOS Apple Vision only. Use Fast Plain MD (No OCR) for embedded PDF text.");
 }
 
 async function ensureOutputDirectory(output) {

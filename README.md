@@ -8,7 +8,7 @@ Powerful Converter is an Electron desktop app that runs conversions locally on y
 
 - Convert images between common formats including PNG, JPG, GIF, TIFF, BMP, WebP, ICO, AVIF, JPEG 2000, JPEG XL, SVG, and EMF.
 - Convert images to individual PDFs or combine multiple images into one PDF.
-- Convert PDF pages to image formats, or export PDFs to Markdown with either fast plain embedded-text extraction or Windows OCR.
+- Convert PDF pages to image formats, or export PDFs to Markdown with either fast plain embedded-text extraction, Windows OCR, or macOS Apple Vision OCR.
 - Convert Word, PowerPoint, Excel, and text-like documents to PDF or related document formats through Microsoft Office, LibreOffice, or automatic fallback.
 - Convert video between 3GP, AVI, FLV, MKV, MOV, MP4, OGV, WebM, WMV, and TS, create GIFs from videos up to 10 seconds, or extract video audio to supported audio formats.
 - Convert audio between AAC, AIFF, ALAC, AMR, FLAC, M4A, MP3, OGG, WAV, and WMA.
@@ -22,7 +22,7 @@ Powerful Converter is an Electron desktop app that runs conversions locally on y
 - Node.js and npm for development
 - Microsoft Office installed locally for Office document conversion, or LibreOffice installed separately if selected in Settings
 
-Image, PDF, audio, video, and document conversions are handled locally. Microsoft Office automation is the default document conversion engine. LibreOffice remains available as an optional local engine when users install it themselves.
+Image, PDF, audio, video, and document conversions are handled locally. PDF to Markdown does not use LibreOffice or `soffice`: fast Markdown uses Poppler text extraction, while OCR Markdown uses Windows OCR on Windows and Apple Vision on macOS. Microsoft Office automation is the default Office document conversion engine. LibreOffice remains available as an optional local engine when users install it themselves.
 
 ## Install
 
